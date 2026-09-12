@@ -1,0 +1,26 @@
+name: smart_step_gps
+description: Smart Step GPS Mobile App for Parents and Monitors
+
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.1.0
+  shared_preferences: ^2.2.1
+  geolocator: ^10.1.0
+  flutter_secure_storage: ^9.0.0
+  provider: ^6.0.5
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^2.0.0
+
+flutter:
+  uses-material-design: true
