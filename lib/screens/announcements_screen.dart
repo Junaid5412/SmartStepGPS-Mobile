@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import '../widgets/custom_loading.dart';
 
 class AnnouncementsScreen extends StatefulWidget {
   const AnnouncementsScreen({Key? key}) : super(key: key);
@@ -76,9 +77,7 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
 
   Widget _buildBody() {
     if (_isLoading) {
-      return const Center(
-        child: CircularProgressIndicator(color: Colors.blueAccent),
-      );
+      return const CustomLoading(message: 'Loading announcements...');
     }
 
     if (_errorMessage != null) {

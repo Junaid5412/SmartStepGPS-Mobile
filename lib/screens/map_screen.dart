@@ -6,6 +6,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import '../services/api_service.dart';
+import '../widgets/custom_loading.dart';
 
 class MapScreen extends StatefulWidget {
   final Map<String, dynamic> student;
@@ -350,16 +351,7 @@ class _MapScreenState extends State<MapScreen> {
         ],
       ),
       body: _isLoading
-          ? const Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  CircularProgressIndicator(color: Color(0xFF1E3C72)),
-                  SizedBox(height: 12),
-                  Text('Connecting to live bus GPS...', style: TextStyle(color: Colors.grey)),
-                ],
-              ),
-            )
+          ? const CustomLoading(message: 'Connecting to live bus GPS...')
           : Stack(
               children: [
                 // 1. Flutter Map

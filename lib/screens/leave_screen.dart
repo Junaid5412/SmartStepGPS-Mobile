@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import '../widgets/custom_loading.dart';
 
 class LeaveScreen extends StatefulWidget {
   final List<dynamic> students;
@@ -121,9 +122,7 @@ class _LeaveScreenState extends State<LeaveScreen> {
 
   Widget _buildBody() {
     if (_isLoading) {
-      return const Center(
-        child: CircularProgressIndicator(color: Colors.blueAccent),
-      );
+      return const CustomLoading(message: 'Loading leave requests...');
     }
 
     if (_errorMessage != null) {
@@ -716,14 +715,7 @@ class _AddLeaveBottomSheetState extends State<_AddLeaveBottomSheet> {
                     elevation: 1,
                   ),
                   child: _isSubmitting
-                      ? const SizedBox(
-                          width: 22,
-                          height: 22,
-                          child: CircularProgressIndicator(
-                            color: Colors.white,
-                            strokeWidth: 2.5,
-                          ),
-                        )
+                      ? CustomLoading.indicator()
                       : const Text(
                           'Submit Leave Request',
                           style: TextStyle(

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import '../widgets/custom_loading.dart';
 
 class ForgotPasswordScreen extends StatefulWidget {
   const ForgotPasswordScreen({Key? key}) : super(key: key);
@@ -195,7 +196,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                     height: 48,
                     child: ElevatedButton.icon(
                       onPressed: _isLoading ? null : _requestOtp,
-                      icon: _isLoading ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.send),
+                      icon: _isLoading ? CustomLoading.indicator() : const Icon(Icons.send),
                       label: Text(_isLoading ? 'Sending Code...' : 'Send Reset Code', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF1565C0),
@@ -243,7 +244,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                     height: 48,
                     child: ElevatedButton.icon(
                       onPressed: _isLoading ? null : _resetPassword,
-                      icon: _isLoading ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.check),
+                      icon: _isLoading ? CustomLoading.indicator() : const Icon(Icons.check),
                       label: Text(_isLoading ? 'Resetting...' : 'Reset Password & Log In', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.green[700],

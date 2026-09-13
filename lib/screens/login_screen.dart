@@ -5,6 +5,8 @@ import '../services/api_service.dart';
 import 'monitor_dashboard.dart';
 import 'parent_dashboard.dart';
 import 'forgot_password_screen.dart';
+import 'terms_screen.dart';
+import '../widgets/custom_loading.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({Key? key}) : super(key: key);
@@ -128,15 +130,29 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                   children: [
                     // Logo
                     Container(
-                      padding: const EdgeInsets.all(20),
+                      padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.15),
+                        color: Colors.white,
                         shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white.withOpacity(0.3), width: 2),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.2),
+                            blurRadius: 20,
+                            offset: const Offset(0, 6),
+                          ),
+                        ],
                       ),
-                      child: _logoUrl.isNotEmpty
-                        ? ClipOval(child: Image.network(_logoUrl, height: 60, width: 60, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.directions_bus, size: 50, color: Colors.white)))
-                        : const Icon(Icons.directions_bus, size: 50, color: Colors.white),
+                      child: ClipOval(
+                        child: Image.asset(
+                          'assets/images/logo.png',
+                          height: 64,
+                          width: 64,
+                          fit: BoxFit.contain,
+                          errorBuilder: (_, __, ___) => _logoUrl.isNotEmpty
+                            ? Image.network(_logoUrl, height: 64, width: 64, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.directions_bus, size: 50, color: Color(0xFF1565C0)))
+                            : const Icon(Icons.directions_bus, size: 50, color: Color(0xFF1565C0)),
+                        ),
+                      ),
                     ),
                     const SizedBox(height: 20),
                     Text(_appName, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: 1)),
@@ -216,7 +232,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                                 elevation: 4,
                               ),
                               child: _isLoading 
-                                ? const SizedBox(height: 22, width: 22, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
+                                ? CustomLoading.indicator()
                                 : const Text('Sign In', style: TextStyle(fontSize: 17, color: Colors.white, fontWeight: FontWeight.w700, letterSpacing: 0.5)),
                             ),
                           ),
@@ -228,13 +244,21 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         GestureDetector(
+                          behavior: HitTestBehavior.opaque,
                           onTap: () => launchUrl(Uri.parse('https://gps.khanhub.site/privacy.html')),
-                          child: Text('Privacy Policy', style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 12, decoration: TextDecoration.underline, decorationColor: Colors.white54)),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                            child: Text('Privacy Policy', style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 12, decoration: TextDecoration.underline, decorationColor: Colors.white54)),
+                          ),
                         ),
-                        Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: Text('|', style: TextStyle(color: Colors.white.withOpacity(0.4)))),
+                        Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: Text('|', style: TextStyle(color: Colors.white.withOpacity(0.4)))),
                         GestureDetector(
-                          onTap: () => launchUrl(Uri.parse('https://gps.khanhub.site/terms.html')),
-                          child: Text('Terms & Conditions', style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 12, decoration: TextDecoration.underline, decorationColor: Colors.white54)),
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const TermsScreen())),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                            child: Text('Terms & Conditions', style: TextStyle(color: Colors.white.withOpacity(0.85), fontSize: 12, decoration: TextDecoration.underline, decorationColor: Colors.white70)),
+                          ),
                         ),
                       ],
                     ),

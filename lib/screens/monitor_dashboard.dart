@@ -3,6 +3,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/api_service.dart';
 import 'login_screen.dart';
+import 'terms_screen.dart';
+import '../widgets/custom_loading.dart';
 
 class MonitorDashboard extends StatefulWidget {
   const MonitorDashboard({Key? key}) : super(key: key);
@@ -533,7 +535,25 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const CircleAvatar(radius: 28, backgroundColor: Colors.white24, child: Icon(Icons.directions_bus, size: 32, color: Colors.white)),
+                  Row(
+                    children: [
+                      const CircleAvatar(radius: 28, backgroundColor: Colors.white24, child: Icon(Icons.directions_bus, size: 32, color: Colors.white)),
+                      const Spacer(),
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+                        padding: const EdgeInsets.all(4),
+                        child: ClipOval(
+                          child: Image.asset(
+                            'assets/images/logo.png',
+                            fit: BoxFit.contain,
+                            errorBuilder: (_, __, ___) => const Icon(Icons.directions_bus, color: Color(0xFF1565C0)),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 12),
                   Text(_staffName, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 2),
@@ -553,6 +573,30 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
                 _loadRoster();
               },
             ),
+            ListTile(
+              leading: const Icon(Icons.description_rounded, color: Colors.blueGrey),
+              title: const Text('Terms & Conditions'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(context, MaterialPageRoute(builder: (_) => const TermsScreen()));
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.privacy_tip_rounded, color: Colors.blueGrey),
+              title: const Text('Privacy Policy'),
+              onTap: () {
+                Navigator.pop(context);
+                launchUrl(Uri.parse('https://gps.khanhub.site/privacy.html'));
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.info_rounded, color: Colors.blueGrey),
+              title: const Text('About Us'),
+              onTap: () {
+                Navigator.pop(context);
+                launchUrl(Uri.parse('https://gps.khanhub.site/about.html'));
+              },
+            ),
             const Spacer(),
             const Divider(),
             ListTile(
@@ -565,7 +609,7 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
         ),
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator(color: Color(0xFF1565C0)))
+          ? const CustomLoading(message: 'Loading student roster...')
           : RefreshIndicator(
               onRefresh: _loadRoster,
               child: CustomScrollView(

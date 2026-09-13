@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import '../widgets/custom_loading.dart';
 
 class ParentProfileScreen extends StatefulWidget {
   const ParentProfileScreen({Key? key}) : super(key: key);
@@ -143,7 +144,7 @@ class _ParentProfileScreenState extends State<ParentProfileScreen> {
         iconTheme: const IconThemeData(color: Colors.white),
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator(color: Color(0xFF1565C0)))
+          ? const CustomLoading(message: 'Loading your profile...')
           : SingleChildScrollView(
               padding: const EdgeInsets.all(16),
               child: Column(
@@ -203,7 +204,7 @@ class _ParentProfileScreenState extends State<ParentProfileScreen> {
                     height: 48,
                     child: ElevatedButton.icon(
                       onPressed: _isSaving ? null : _saveProfile,
-                      icon: _isSaving ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.check),
+                      icon: _isSaving ? CustomLoading.indicator() : const Icon(Icons.check),
                       label: Text(_isSaving ? 'Saving Changes...' : 'Save Profile Details', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF1565C0),
@@ -226,7 +227,7 @@ class _ParentProfileScreenState extends State<ParentProfileScreen> {
                       height: 44,
                       child: ElevatedButton.icon(
                         onPressed: _isChangingPassword ? null : _changePassword,
-                        icon: _isChangingPassword ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.vpn_key),
+                        icon: _isChangingPassword ? CustomLoading.indicator() : const Icon(Icons.vpn_key),
                         label: Text(_isChangingPassword ? 'Updating...' : 'Update Password', style: const TextStyle(fontWeight: FontWeight.bold)),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.teal[700],

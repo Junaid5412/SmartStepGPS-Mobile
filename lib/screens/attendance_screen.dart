@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import '../widgets/custom_loading.dart';
 
 class AttendanceScreen extends StatefulWidget {
   final List<dynamic> students;
@@ -207,9 +208,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
 
   Widget _buildAttendanceContent() {
     if (_isLoading) {
-      return const Center(
-        child: CircularProgressIndicator(color: Colors.blueAccent),
-      );
+      return const CustomLoading(message: 'Fetching attendance history...');
     }
 
     if (_errorMessage != null) {
