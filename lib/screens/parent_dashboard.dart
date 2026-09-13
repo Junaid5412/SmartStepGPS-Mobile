@@ -344,217 +344,242 @@ class _ParentDashboardState extends State<ParentDashboard> {
     );
   }
 
+  Widget _buildCompanyHeader() {
+    return Container(
+      width: double.infinity,
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF1565C0), Color(0xFF0D47A1), Color(0xFF1A237E)],
+        ),
+        borderRadius: BorderRadius.vertical(bottom: Radius.circular(24)),
+        boxShadow: [
+          BoxShadow(
+            color: Color(0x331565C0),
+            blurRadius: 12,
+            offset: Offset(0, 6),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 22),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Company Brand Badge & Name Row (Below Menu)
+          Row(
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.2),
+                      blurRadius: 10,
+                      offset: const Offset(0, 3),
+                    ),
+                  ],
+                ),
+                padding: const EdgeInsets.all(4),
+                child: ClipOval(
+                  child: Image.asset(
+                    'assets/images/logo.png',
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, __, ___) => const Icon(
+                      Icons.directions_bus_rounded,
+                      color: Color(0xFF1565C0),
+                      size: 30,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _companyName,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.6,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      _companyTagline,
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.85),
+                        fontSize: 12,
+                        letterSpacing: 0.2,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Container(
+            height: 1,
+            color: Colors.white.withOpacity(0.15),
+          ),
+          const SizedBox(height: 14),
+          // Parent Greeting Row
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Welcome back,',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.85),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    _userName,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.white.withOpacity(0.3)),
+                ),
+                child: Text(
+                  '${_students.length} ${_students.length == 1 ? 'Child' : 'Children'} Enrolled',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF0F4F8),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF1565C0),
+        elevation: 0,
+        leading: Builder(
+          builder: (context) => IconButton(
+            tooltip: 'Menu',
+            icon: const Icon(Icons.menu_rounded, color: Colors.white, size: 26),
+            onPressed: () => Scaffold.of(context).openDrawer(),
+          ),
+        ),
+        title: Text(
+          _companyName,
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+            fontSize: 18,
+            letterSpacing: 0.5,
+          ),
+        ),
+        centerTitle: false,
+        actions: [
+          IconButton(
+            tooltip: 'Refresh',
+            icon: const Icon(Icons.refresh_rounded, color: Colors.white),
+            onPressed: () {
+              _fetchStudents();
+              _loadSettings();
+            },
+          ),
+        ],
+      ),
       body: _isLoading
           ? const CustomLoading(message: 'Loading your dashboard...')
-          : CustomScrollView(
-              slivers: [
-                // Gradient AppBar with Company Logo & Name
-                SliverAppBar(
-                  expandedHeight: 215,
-                  floating: false,
-                  pinned: true,
-                  backgroundColor: const Color(0xFF1565C0),
-                  iconTheme: const IconThemeData(color: Colors.white),
-                  leading: Builder(
-                    builder: (context) => IconButton(
-                      tooltip: 'Menu',
-                      icon: const Icon(Icons.menu_rounded, color: Colors.white, size: 26),
-                      onPressed: () => Scaffold.of(context).openDrawer(),
-                    ),
-                  ),
-                  actions: [
-                    IconButton(
-                      tooltip: 'Refresh',
-                      icon: const Icon(Icons.refresh, color: Colors.white),
-                      onPressed: () {
-                        _fetchStudents();
-                        _loadSettings();
-                      },
+          : RefreshIndicator(
+              onRefresh: () async {
+                await _fetchStudents();
+                await _loadSettings();
+              },
+              child: SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Company Brand & Welcome Header (Positioned Below Sidebar Menu)
+                    _buildCompanyHeader(),
+                    const SizedBox(height: 18),
+
+                    // Slideshow Banners
+                    _buildBannerCarousel(),
+                    const SizedBox(height: 20),
+
+                    // Module Grid & Children
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _buildModuleGrid(),
+                          const SizedBox(height: 24),
+                          Row(
+                            children: [
+                              Container(
+                                width: 4,
+                                height: 20,
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF1565C0),
+                                  borderRadius: BorderRadius.circular(2),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              const Text(
+                                'My Children',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF1A237E),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          if (_students.isEmpty)
+                            _buildEmptyState()
+                          else
+                            ..._students.map((s) => _buildStudentCard(s)).toList(),
+                          const SizedBox(height: 24),
+                        ],
+                      ),
                     ),
                   ],
-                  flexibleSpace: FlexibleSpaceBar(
-                    background: Container(
-                      decoration: const BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [Color(0xFF1565C0), Color(0xFF0D47A1), Color(0xFF1A237E)],
-                        ),
-                      ),
-                      child: SafeArea(
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisAlignment: MainAxisAlignment.end,
-                            children: [
-                              // Company Logo & Brand Badge Row
-                              Row(
-                                children: [
-                                  Container(
-                                    width: 44,
-                                    height: 44,
-                                    decoration: BoxDecoration(
-                                      color: Colors.white,
-                                      shape: BoxShape.circle,
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: Colors.black.withOpacity(0.2),
-                                          blurRadius: 8,
-                                          offset: const Offset(0, 2),
-                                        ),
-                                      ],
-                                    ),
-                                    padding: const EdgeInsets.all(4),
-                                    child: ClipOval(
-                                      child: Image.asset(
-                                        'assets/images/logo.png',
-                                        fit: BoxFit.contain,
-                                        errorBuilder: (_, __, ___) => const Icon(
-                                          Icons.directions_bus_rounded,
-                                          color: Color(0xFF1565C0),
-                                          size: 26,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          _companyName,
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.w800,
-                                            letterSpacing: 0.6,
-                                          ),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                        Text(
-                                          _companyTagline,
-                                          style: TextStyle(
-                                            color: Colors.white.withOpacity(0.8),
-                                            fontSize: 11,
-                                          ),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const Spacer(),
-                              // Parent Welcome Greeting
-                              Text(
-                                'Welcome back,',
-                                style: TextStyle(color: Colors.white.withOpacity(0.85), fontSize: 13),
-                              ),
-                              const SizedBox(height: 2),
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      _userName,
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 22,
-                                        fontWeight: FontWeight.w800,
-                                      ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                    decoration: BoxDecoration(
-                                      color: Colors.white.withOpacity(0.22),
-                                      borderRadius: BorderRadius.circular(20),
-                                      border: Border.all(color: Colors.white.withOpacity(0.3)),
-                                    ),
-                                    child: Text(
-                                      '${_students.length} ${_students.length == 1 ? 'Child' : 'Children'} Enrolled',
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
                 ),
-
-                // Body content
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // Dynamic Banner Carousel / Slideshow
-                        _buildBannerCarousel(),
-                        const SizedBox(height: 20),
-
-                        // Module Grid
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _buildModuleGrid(),
-                              const SizedBox(height: 24),
-
-                              // Children Section
-                              Row(
-                                children: [
-                                  Container(
-                                    width: 4,
-                                    height: 20,
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFF1565C0),
-                                      borderRadius: BorderRadius.circular(2),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  const Text(
-                                    'My Children',
-                                    style: TextStyle(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.w700,
-                                      color: Color(0xFF1A237E),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 12),
-                              if (_students.isEmpty)
-                                _buildEmptyState()
-                              else
-                                ..._students.map((s) => _buildStudentCard(s)).toList(),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
+              ),
             ),
       drawer: _buildDrawer(),
     );
