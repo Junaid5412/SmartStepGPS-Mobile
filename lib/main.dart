@@ -1,44 +1,55 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/services.dart';
 import 'screens/login_screen.dart';
-import 'screens/monitor_dashboard.dart';
-import 'screens/parent_dashboard.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // TODO: Initialize Firebase
-  // await Firebase.initializeApp();
-  
-  final prefs = await SharedPreferences.getInstance();
-  final token = prefs.getString('api_token');
-  final role = prefs.getString('role');
-
-  Widget initialScreen = const LoginScreen();
-  if (token != null) {
-    if (role == 'monitor') {
-      initialScreen = const MonitorDashboard();
-    } else if (role == 'parent') {
-      initialScreen = const ParentDashboard();
-    }
-  }
-
-  runApp(SmartStepApp(initialScreen: initialScreen));
+  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarIconBrightness: Brightness.light,
+  ));
+  runApp(const SmartStepApp());
 }
 
 class SmartStepApp extends StatelessWidget {
-  final Widget initialScreen;
-
-  const SmartStepApp({Key? key, required this.initialScreen}) : super(key: key);
+  const SmartStepApp({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Smart Step GPS',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        primarySwatch: Colors.blue,
-        fontFamily: 'Roboto',
+        primaryColor: const Color(0xFF1565C0),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF1565C0),
+          brightness: Brightness.light,
+        ),
+        scaffoldBackgroundColor: const Color(0xFFF0F4F8),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Color(0xFF1565C0),
+          foregroundColor: Colors.white,
+          elevation: 0,
+        ),
+        cardTheme: CardThemeData(
+          elevation: 2,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        ),
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF1565C0),
+            foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            elevation: 2,
+          ),
+        ),
+        snackBarTheme: SnackBarThemeData(
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+        useMaterial3: true,
       ),
-      home: initialScreen,
+      home: const LoginScreen(),
     );
   }
 }

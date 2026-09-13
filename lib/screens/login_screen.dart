@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../services/api_service.dart';
 import 'monitor_dashboard.dart';
 import 'parent_dashboard.dart';
+import 'forgot_password_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({Key? key}) : super(key: key);
@@ -11,38 +13,95 @@ class LoginScreen extends StatefulWidget {
   _LoginScreenState createState() => _LoginScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen> {
+class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStateMixin {
   final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   bool _isLoading = false;
+  bool _obscurePassword = true;
+  String _logoUrl = '';
+  String _appName = 'Smart Step GPS';
+  late AnimationController _animController;
+  late Animation<double> _fadeAnim;
 
-  void _login() async {
-    setState(() => _isLoading = true);
-    
-    // Simulate getting FCM token
-    String fcmToken = "DUMMY_FCM_TOKEN_FOR_NOW"; 
-    
-    final result = await ApiService.login(
-      _usernameController.text,
-      _passwordController.text,
-      fcmToken
-    );
+  @override
+  void initState() {
+    super.initState();
+    _animController = AnimationController(vsync: this, duration: const Duration(milliseconds: 800));
+    _fadeAnim = CurvedAnimation(parent: _animController, curve: Curves.easeOut);
+    _animController.forward();
+    _loadSettings();
+    _checkExistingSession();
+  }
 
-    setState(() => _isLoading = false);
+  @override
+  void dispose() {
+    _animController.dispose();
+    _usernameController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
 
-    if (result['success'] == true) {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('api_token', result['token']);
-      await prefs.setString('role', result['role']);
-
-      if (result['role'] == 'monitor' || result['role'] == 'driver') {
+  Future<void> _checkExistingSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('api_token');
+    final role = prefs.getString('role');
+    if (token != null && token.isNotEmpty && role != null) {
+      if (role == 'monitor' || role == 'driver') {
         Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const MonitorDashboard()));
       } else {
         Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const ParentDashboard()));
       }
-    } else {
+    }
+  }
+
+  Future<void> _loadSettings() async {
+    try {
+      final settings = await ApiService.getSettings();
+      if (settings['success'] == true) {
+        setState(() {
+          _appName = settings['app_name'] ?? 'Smart Step GPS';
+          _logoUrl = settings['logo'] ?? '';
+        });
+      }
+    } catch (_) {}
+  }
+
+  void _login() async {
+    if (_usernameController.text.trim().isEmpty || _passwordController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(result['error'] ?? 'Login failed')),
+        const SnackBar(content: Text('Please enter username and password'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+    setState(() => _isLoading = true);
+    try {
+      final result = await ApiService.login(
+        _usernameController.text.trim(),
+        _passwordController.text.trim(),
+        'DUMMY_FCM_TOKEN',
+      );
+      setState(() => _isLoading = false);
+      if (result['success'] == true) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('api_token', result['token']);
+        await prefs.setString('role', result['role']);
+        if (result['user'] != null && result['user']['name'] != null) {
+          await prefs.setString('user_name', result['user']['name']);
+        }
+        if (result['role'] == 'monitor' || result['role'] == 'driver') {
+          Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const MonitorDashboard()));
+        } else {
+          Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const ParentDashboard()));
+        }
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(result['error'] ?? 'Login failed'), backgroundColor: Colors.redAccent),
+        );
+      }
+    } catch (e) {
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Network Error: Could not connect to server.'), backgroundColor: Colors.redAccent),
       );
     }
   }
@@ -50,42 +109,140 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Text('Smart Step GPS', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.blue)),
-              const SizedBox(height: 40),
-              TextField(
-                controller: _usernameController,
-                decoration: const InputDecoration(
-                  labelText: 'Username or Phone',
-                  border: OutlineInputBorder(),
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF1565C0), Color(0xFF0D47A1), Color(0xFF1A237E)],
+          ),
+        ),
+        child: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 28),
+              child: FadeTransition(
+                opacity: _fadeAnim,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // Logo
+                    Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.15),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white.withOpacity(0.3), width: 2),
+                      ),
+                      child: _logoUrl.isNotEmpty
+                        ? ClipOval(child: Image.network(_logoUrl, height: 60, width: 60, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.directions_bus, size: 50, color: Colors.white)))
+                        : const Icon(Icons.directions_bus, size: 50, color: Colors.white),
+                    ),
+                    const SizedBox(height: 20),
+                    Text(_appName, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: 1)),
+                    const SizedBox(height: 6),
+                    Text('Parent & Staff Portal', style: TextStyle(fontSize: 14, color: Colors.white.withOpacity(0.7), letterSpacing: 0.5)),
+                    const SizedBox(height: 40),
+
+                    // Login Card
+                    Container(
+                      padding: const EdgeInsets.all(28),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(20),
+                        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 30, offset: const Offset(0, 10))],
+                      ),
+                      child: Column(
+                        children: [
+                          const Text('Sign In', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF1A237E))),
+                          const SizedBox(height: 24),
+                          TextField(
+                            controller: _usernameController,
+                            decoration: InputDecoration(
+                              labelText: 'Username or Phone',
+                              prefixIcon: const Icon(Icons.person_outline, color: Color(0xFF1565C0)),
+                              filled: true,
+                              fillColor: const Color(0xFFF5F7FA),
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+                              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFF1565C0), width: 2)),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          TextField(
+                            controller: _passwordController,
+                            obscureText: _obscurePassword,
+                            decoration: InputDecoration(
+                              labelText: 'Password',
+                              prefixIcon: const Icon(Icons.lock_outline, color: Color(0xFF1565C0)),
+                              suffixIcon: IconButton(
+                                icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility, color: Colors.grey),
+                                onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                              ),
+                              filled: true,
+                              fillColor: const Color(0xFFF5F7FA),
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+                              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: Color(0xFF1565C0), width: 2)),
+                            ),
+                          ),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: TextButton(
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(builder: (_) => const ForgotPasswordScreen()),
+                                );
+                              },
+                              child: const Text(
+                                'Forgot Password?',
+                                style: TextStyle(
+                                  color: Color(0xFF1565C0),
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          SizedBox(
+                            width: double.infinity,
+                            height: 52,
+                            child: ElevatedButton(
+                              onPressed: _isLoading ? null : _login,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF1565C0),
+                                disabledBackgroundColor: const Color(0xFF1565C0).withOpacity(0.6),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                                elevation: 4,
+                              ),
+                              child: _isLoading 
+                                ? const SizedBox(height: 22, width: 22, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
+                                : const Text('Sign In', style: TextStyle(fontSize: 17, color: Colors.white, fontWeight: FontWeight.w700, letterSpacing: 0.5)),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 32),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        GestureDetector(
+                          onTap: () => launchUrl(Uri.parse('https://gps.khanhub.site/privacy.html')),
+                          child: Text('Privacy Policy', style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 12, decoration: TextDecoration.underline, decorationColor: Colors.white54)),
+                        ),
+                        Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: Text('|', style: TextStyle(color: Colors.white.withOpacity(0.4)))),
+                        GestureDetector(
+                          onTap: () => launchUrl(Uri.parse('https://gps.khanhub.site/terms.html')),
+                          child: Text('Terms & Conditions', style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 12, decoration: TextDecoration.underline, decorationColor: Colors.white54)),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                  ],
                 ),
               ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _passwordController,
-                obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: 'Password',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity,
-                height: 50,
-                child: ElevatedButton(
-                  onPressed: _isLoading ? null : _login,
-                  child: _isLoading 
-                    ? const CircularProgressIndicator(color: Colors.white)
-                    : const Text('Sign In', style: TextStyle(fontSize: 18)),
-                ),
-              ),
-            ],
+            ),
           ),
         ),
       ),
