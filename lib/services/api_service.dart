@@ -187,7 +187,11 @@ class ApiService {
         'address': address,
       }),
     );
-    return _safeDecode(response.body);
+    final data = _safeDecode(response.body);
+    if (data['success'] == true && data['updated_name'] != null) {
+      await prefs.setString('user_name', data['updated_name']);
+    }
+    return data;
   }
 
   static Future<Map<String, dynamic>> changePassword(String oldPassword, String newPassword) async {

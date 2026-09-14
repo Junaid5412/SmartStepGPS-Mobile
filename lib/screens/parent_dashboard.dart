@@ -11,6 +11,8 @@ import 'leave_screen.dart';
 import 'announcements_screen.dart';
 import 'parent_profile_screen.dart';
 import 'terms_screen.dart';
+import 'privacy_screen.dart';
+import 'about_screen.dart';
 
 class ParentDashboard extends StatefulWidget {
   const ParentDashboard({Key? key}) : super(key: key);
@@ -99,6 +101,18 @@ class _ParentDashboardState extends State<ParentDashboard> {
   Future<void> _loadProfile() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() => _userName = prefs.getString('user_name') ?? 'Parent');
+    
+    // Silently sync the latest name from the server in case it was changed by admin on the website
+    try {
+      final res = await ApiService.getProfile();
+      if (res['success'] == true && res['profile'] != null) {
+        final dName = res['profile']['display_name'];
+        if (dName != null && dName.toString().isNotEmpty) {
+          setState(() => _userName = dName);
+          await prefs.setString('user_name', dName);
+        }
+      }
+    } catch (_) {}
   }
 
   Future<void> _loadSettings() async {
@@ -513,6 +527,7 @@ class _ParentDashboardState extends State<ParentDashboard> {
             tooltip: 'Refresh',
             icon: const Icon(Icons.refresh_rounded, color: Colors.white),
             onPressed: () {
+              _loadProfile();
               _fetchStudents();
               _loadSettings();
             },
@@ -523,6 +538,7 @@ class _ParentDashboardState extends State<ParentDashboard> {
           ? const CustomLoading(message: 'Loading your dashboard...')
           : RefreshIndicator(
               onRefresh: () async {
+                await _loadProfile();
                 await _fetchStudents();
                 await _loadSettings();
               },
@@ -595,13 +611,14 @@ class _ParentDashboardState extends State<ParentDashboard> {
     if (_modules['bus_tracking'] == true) {
       modules.add(_buildModuleCard('Bus Tracking', Icons.gps_fixed_rounded, const [Color(0xFF4CAF50), Color(0xFF2E7D32)], () {
         if (_students.isNotEmpty) {
-          _showStudentPicker('Select Child to Track', (student) {
-            if (student['device_id'] != null) {
-              Navigator.push(context, MaterialPageRoute(builder: (_) => MapScreen(student: student)));
-            } else {
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No GPS device linked.')));
-            }
-          });
+          final student = _students.first;
+          if (student['device_id'] != null) {
+            Navigator.push(context, MaterialPageRoute(builder: (_) => MapScreen(student: student)));
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No GPS device linked.')));
+          }
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No children found.')));
         }
       }));
     }
@@ -658,63 +675,48 @@ class _ParentDashboardState extends State<ParentDashboard> {
   }
 
   Widget _buildStudentCard(dynamic student) {
-    final lastEvent = student['latest_event'];
-    String statusText = 'No updates';
-    Color statusColor = Colors.grey;
-    IconData statusIcon = Icons.info_outline;
-
-    if (lastEvent != null && lastEvent is Map) {
-      String type = lastEvent['event_type']?.toString() ?? '';
-      if (type == 'pickup') { statusText = 'Picked up'; statusColor = const Color(0xFF2196F3); statusIcon = Icons.arrow_upward; }
-      if (type == 'dropoff') { statusText = 'Dropped off'; statusColor = const Color(0xFF4CAF50); statusIcon = Icons.arrow_downward; }
-      if (type == 'absent') { statusText = 'Absent'; statusColor = const Color(0xFFE53935); statusIcon = Icons.close; }
-    }
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 10, offset: const Offset(0, 4))],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            Container(
-              width: 52, height: 52,
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(colors: [Color(0xFF1565C0), Color(0xFF1A237E)]),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Center(
-                child: Text(
-                  (student['name'] ?? '?')[0].toUpperCase(),
-                  style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(context, MaterialPageRoute(builder: (_) => AttendanceScreen(students: _students)));
+      },
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 10, offset: const Offset(0, 4))],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              Container(
+                width: 52, height: 52,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(colors: [Color(0xFF1565C0), Color(0xFF1A237E)]),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Center(
+                  child: Text(
+                    (student['name'] ?? '?')[0].toUpperCase(),
+                    style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(student['name'] ?? 'Unknown', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-                  const SizedBox(height: 3),
-                  Text('Grade ${student['grade'] ?? 'N/A'}  |  ${student['bus_name'] ?? 'No Bus'}', style: TextStyle(color: Colors.grey[500], fontSize: 12)),
-                ],
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(student['name'] ?? 'Unknown', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 3),
+                    Text('Grade ${student['grade'] ?? 'N/A'}  |  ${student['bus_name'] ?? 'No Bus'}', style: TextStyle(color: Colors.grey[500], fontSize: 12)),
+                  ],
+                ),
               ),
-            ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(color: statusColor.withOpacity(0.1), borderRadius: BorderRadius.circular(20)),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(statusIcon, size: 13, color: statusColor),
-                const SizedBox(width: 4),
-                Text(statusText, style: TextStyle(color: statusColor, fontSize: 11, fontWeight: FontWeight.w600)),
-              ]),
-            ),
-          ],
+              const Icon(Icons.chevron_right_rounded, color: Colors.grey, size: 24),
+            ],
+          ),
         ),
       ),
     );
@@ -737,12 +739,17 @@ class _ParentDashboardState extends State<ParentDashboard> {
         children: [
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(20, 60, 20, 20),
+            padding: const EdgeInsets.fromLTRB(24, 70, 24, 24),
             decoration: const BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [Color(0xFF1565C0), Color(0xFF1A237E)],
+                colors: [Color(0xFF0D47A1), Color(0xFF1976D2)],
+              ),
+              image: DecorationImage(
+                image: AssetImage('assets/images/pattern.png'), // Optional subtle pattern if available
+                fit: BoxFit.cover,
+                opacity: 0.1,
               ),
             ),
             child: Column(
@@ -754,70 +761,59 @@ class _ParentDashboardState extends State<ParentDashboard> {
                       padding: const EdgeInsets.all(3),
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white.withOpacity(0.6), width: 2),
+                        border: Border.all(color: Colors.white.withOpacity(0.8), width: 2),
+                        boxShadow: [
+                          BoxShadow(color: Colors.black.withOpacity(0.15), blurRadius: 10, offset: const Offset(0, 4))
+                        ]
                       ),
                       child: const CircleAvatar(
-                        radius: 28,
+                        radius: 32,
                         backgroundColor: Colors.white24,
-                        child: Icon(Icons.person, size: 34, color: Colors.white),
-                      ),
-                    ),
-                    const Spacer(),
-                    Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.2),
-                            blurRadius: 6,
-                          ),
-                        ],
-                      ),
-                      padding: const EdgeInsets.all(4),
-                      child: ClipOval(
-                        child: Image.asset(
-                          'assets/images/logo.png',
-                          fit: BoxFit.contain,
-                          errorBuilder: (_, __, ___) => const Icon(Icons.directions_bus, color: Color(0xFF1565C0)),
-                        ),
+                        child: Icon(Icons.person, size: 36, color: Colors.white),
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 14),
-                Text(_userName, style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 20),
+                Text(_userName, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
                 const SizedBox(height: 4),
-                Text('$_companyName • Parent Portal', style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 13)),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(12)),
+                  child: Text('$_companyName • Parent Portal', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500)),
+                )
               ],
             ),
           ),
           Expanded(
-            child: ListView(
-              padding: EdgeInsets.zero,
-              children: [
-                _drawerItem(Icons.home_rounded, 'Home', () => Navigator.pop(context)),
-                _drawerItem(Icons.person_outline_rounded, 'My Profile & Settings', () {
-                  Navigator.pop(context);
-                  Navigator.push(context, MaterialPageRoute(builder: (_) => const ParentProfileScreen())).then((_) => _loadProfile());
-                }),
-                _drawerItem(Icons.description_rounded, 'Terms & Conditions', () {
-                  Navigator.pop(context);
-                  Navigator.push(context, MaterialPageRoute(builder: (_) => const TermsScreen()));
-                }),
-                _drawerItem(Icons.privacy_tip_rounded, 'Privacy Policy', () {
-                  Navigator.pop(context);
-                  launchUrl(Uri.parse('https://gps.khanhub.site/privacy.html'));
-                }),
-                _drawerItem(Icons.info_rounded, 'About Us', () {
-                  Navigator.pop(context);
-                  launchUrl(Uri.parse('https://gps.khanhub.site/about.html'));
-                }),
-                const Divider(height: 1),
-                _drawerItem(Icons.logout_rounded, 'Logout', _logout, isDestructive: true),
-              ],
+            child: Container(
+              color: const Color(0xFFF8FAFC),
+              child: ListView(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                children: [
+                  _drawerItem(Icons.dashboard_rounded, 'Dashboard', () => Navigator.pop(context)),
+                  _drawerItem(Icons.manage_accounts_rounded, 'Profile & Settings', () {
+                    Navigator.pop(context);
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const ParentProfileScreen())).then((_) => _loadProfile());
+                  }),
+                  const Padding(padding: EdgeInsets.symmetric(horizontal: 20), child: Divider(height: 24, color: Color(0xFFE2E8F0))),
+                  _drawerSectionTitle('Legal & Info'),
+                  _drawerItem(Icons.gavel_rounded, 'Terms & Conditions', () {
+                    Navigator.pop(context);
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const TermsScreen()));
+                  }),
+                  _drawerItem(Icons.privacy_tip_rounded, 'Privacy Policy', () {
+                    Navigator.pop(context);
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const PrivacyScreen()));
+                  }),
+                  _drawerItem(Icons.business_rounded, 'About Us', () {
+                    Navigator.pop(context);
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const AboutScreen()));
+                  }),
+                  const Padding(padding: EdgeInsets.symmetric(horizontal: 20), child: Divider(height: 24, color: Color(0xFFE2E8F0))),
+                  _drawerItem(Icons.logout_rounded, 'Sign Out', _logout, isDestructive: true),
+                ],
+              ),
             ),
           ),
         ],
@@ -825,13 +821,21 @@ class _ParentDashboardState extends State<ParentDashboard> {
     );
   }
 
+  Widget _drawerSectionTitle(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 20, top: 8, bottom: 8),
+      child: Text(title, style: const TextStyle(color: Color(0xFF64748B), fontSize: 13, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
+    );
+  }
+
   Widget _drawerItem(IconData icon, String title, VoidCallback onTap, {bool isDestructive = false}) {
     return ListTile(
-      leading: Icon(icon, color: isDestructive ? Colors.redAccent : const Color(0xFF546E7A), size: 22),
-      title: Text(title, style: TextStyle(color: isDestructive ? Colors.redAccent : Colors.black87, fontWeight: FontWeight.w500)),
+      leading: Icon(icon, color: isDestructive ? Colors.redAccent : const Color(0xFF475569), size: 24),
+      title: Text(title, style: TextStyle(color: isDestructive ? Colors.redAccent : const Color(0xFF1E293B), fontWeight: FontWeight.w600, fontSize: 15)),
       onTap: onTap,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
+      visualDensity: VisualDensity.compact,
     );
   }
 }

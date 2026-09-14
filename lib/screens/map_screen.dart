@@ -52,8 +52,8 @@ class _MapScreenState extends State<MapScreen> {
     _parseInitialStudentData();
     _fetchParentLocation();
     _fetchLocation();
-    // Poll live location every 10 seconds
-    _timer = Timer.periodic(const Duration(seconds: 10), (_) => _fetchLocation());
+    // Poll live location every 1 second
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) => _fetchLocation());
   }
 
   @override
@@ -352,7 +352,9 @@ class _MapScreenState extends State<MapScreen> {
       ),
       body: _isLoading
           ? const CustomLoading(message: 'Connecting to live bus GPS...')
-          : Stack(
+          : (!_isActiveWindow)
+              ? _buildOutOfShiftScreen()
+              : Stack(
               children: [
                 // 1. Flutter Map
                 FlutterMap(
@@ -439,19 +441,12 @@ class _MapScreenState extends State<MapScreen> {
                   ],
                 ),
 
-                // 2. Top Banner: Operating Hours Restriction Notice (if outside shift hours)
-                if (!_isActiveWindow)
-                  Positioned(
-                    top: 12,
-                    left: 12,
-                    right: 12,
-                    child: _buildRestrictedHoursBanner(),
-                  ),
+
 
                 // 3. Floating Map Controls (Right Side)
                 Positioned(
                   right: 14,
-                  top: _isActiveWindow ? 16 : 140,
+                  top: 16,
                   child: Column(
                     children: [
                       _buildFloatingAction(
@@ -598,69 +593,107 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  /// Top Restriction Banner shown when parent opens map outside transport hours
-  Widget _buildRestrictedHoursBanner() {
+  Widget _buildOutOfShiftScreen() {
     final mStart = _timings['morning_start'] ?? '05:30';
     final mEnd = _timings['morning_end'] ?? '07:30';
     final aStart = _timings['afternoon_start'] ?? '13:00';
     final aEnd = _timings['afternoon_end'] ?? '16:00';
 
     return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFE65100).withValues(alpha: 0.95),
-        borderRadius: BorderRadius.circular(14),
-        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 8, offset: Offset(0, 3))],
-      ),
+      width: double.infinity,
+      color: const Color(0xFFF8FAFC),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Row(
-            children: [
-              Icon(Icons.schedule_rounded, color: Colors.white, size: 20),
-              SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'Live Bus Tracking Restricted',
-                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
-                ),
-              ),
-              Icon(Icons.lock_rounded, color: Colors.white70, size: 18),
-            ],
+          Container(
+            padding: const EdgeInsets.all(28),
+            decoration: const BoxDecoration(
+              color: Color(0xFFEFF6FF),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.bus_alert_rounded, size: 80, color: Color(0xFF3B82F6)),
           ),
-          const SizedBox(height: 5),
+          const SizedBox(height: 32),
           const Text(
-            'Live GPS tracking is only accessible during school bus shift timings:',
-            style: TextStyle(color: Colors.white70, fontSize: 11),
+            'Bus Tracking Offline',
+            style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
           ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(color: Colors.black26, borderRadius: BorderRadius.circular(8)),
-                  child: Text(
-                    '🌅 Morning: $mStart - $mEnd',
-                    style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
-                    textAlign: TextAlign.center,
-                  ),
+          const SizedBox(height: 16),
+          const Text(
+            'Live GPS tracking is currently unavailable.\nFor security and privacy, tracking is only accessible during active school bus shift hours.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 15, color: Color(0xFF64748B), height: 1.5),
+          ),
+          const SizedBox(height: 48),
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 20, offset: const Offset(0, 10))],
+              border: Border.all(color: const Color(0xFFE2E8F0)),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(color: const Color(0xFFFFFBEB), borderRadius: BorderRadius.circular(12)),
+                      child: const Icon(Icons.wb_sunny_rounded, color: Color(0xFFF59E0B)),
+                    ),
+                    const SizedBox(width: 16),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Morning Shift', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF334155), fontSize: 15)),
+                        const SizedBox(height: 2),
+                        Text('$mStart - $mEnd', style: const TextStyle(color: Color(0xFF64748B), fontSize: 13, fontWeight: FontWeight.w500)),
+                      ],
+                    ),
+                  ],
                 ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(color: Colors.black26, borderRadius: BorderRadius.circular(8)),
-                  child: Text(
-                    '🌇 Afternoon: $aStart - $aEnd',
-                    style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
-                    textAlign: TextAlign.center,
-                  ),
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 16),
+                  child: Divider(color: Color(0xFFF1F5F9), thickness: 1.5),
                 ),
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(color: const Color(0xFFEEF2FF), borderRadius: BorderRadius.circular(12)),
+                      child: const Icon(Icons.nights_stay_rounded, color: Color(0xFF6366F1)),
+                    ),
+                    const SizedBox(width: 16),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Afternoon Shift', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF334155), fontSize: 15)),
+                        const SizedBox(height: 2),
+                        Text('$aStart - $aEnd', style: const TextStyle(color: Color(0xFF64748B), fontSize: 13, fontWeight: FontWeight.w500)),
+                      ],
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 48),
+          SizedBox(
+            width: double.infinity,
+            height: 54,
+            child: ElevatedButton.icon(
+              onPressed: () => Navigator.pop(context),
+              icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
+              label: const Text('Return to Dashboard', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF3B82F6),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                elevation: 4,
+                shadowColor: const Color(0xFF3B82F6).withOpacity(0.4),
               ),
-            ],
+            ),
           ),
         ],
       ),
@@ -768,6 +801,40 @@ class _MapScreenState extends State<MapScreen> {
               ],
             ),
           ],
+          const SizedBox(height: 16),
+          // Locate Now Button
+          SizedBox(
+            width: double.infinity,
+            height: 44,
+            child: ElevatedButton.icon(
+              onPressed: () {
+                // Show a quick snackbar to assure user
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Locating live bus position...'),
+                    duration: Duration(seconds: 1),
+                    backgroundColor: Color(0xFF1E3C72),
+                  ),
+                );
+                _fetchLocation();
+                if (_busLocation != null) {
+                  _mapController.move(_busLocation!, 16.5);
+                } else if (_homeLocation != null) {
+                  _mapController.move(_homeLocation!, 16.5);
+                }
+              },
+              icon: const Icon(Icons.my_location_rounded, color: Colors.white, size: 20),
+              label: const Text(
+                'Locate Now',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFE65100), // Prominent Orange
+                elevation: 3,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+            ),
+          ),
         ],
       ),
     );
