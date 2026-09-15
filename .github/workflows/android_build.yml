@@ -31,7 +31,7 @@ jobs:
         run: flutter pub get
 
       - name: Decode Keystore
-        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > android/smartgps-release.jks
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > android/app/smartgps-release.jks
 
       - name: Create key.properties
         run: |
