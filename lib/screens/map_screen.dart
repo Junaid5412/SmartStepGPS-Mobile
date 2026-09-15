@@ -45,6 +45,8 @@ class _MapScreenState extends State<MapScreen> {
   double _roadDistanceKm = 0.0;
   int _etaMinutes = 0;
   bool _initialFitted = false;
+  DateTime? _lastRouteFetchTime;
+  LatLng? _lastRoutedBusPosition;
 
   @override
   void initState() {
@@ -52,8 +54,8 @@ class _MapScreenState extends State<MapScreen> {
     _parseInitialStudentData();
     _fetchParentLocation();
     _fetchLocation();
-    // Poll live location every 1 second
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) => _fetchLocation());
+    // Poll live location every 3 seconds
+    _timer = Timer.periodic(const Duration(seconds: 3), (_) => _fetchLocation());
   }
 
   @override
@@ -192,9 +194,29 @@ class _MapScreenState extends State<MapScreen> {
           _isLoading = false;
         });
 
-        // Fetch road routing polyline if bus & destination exist
+        // Fetch road routing polyline if bus & destination exist (throttled to avoid OSRM rate limits)
         if (_busLocation != null && _homeLocation != null) {
-          _fetchRoadRoute(_busLocation!, _homeLocation!, _schoolLocation, _routeStops);
+          final now = DateTime.now();
+          bool shouldFetchRoute = false;
+          if (_roadPolyline.isEmpty || _lastRouteFetchTime == null) {
+            shouldFetchRoute = true;
+          } else if (now.difference(_lastRouteFetchTime!).inSeconds >= 15) {
+            if (_lastRoutedBusPosition == null) {
+              shouldFetchRoute = true;
+            } else {
+              final dLat = (_busLocation!.latitude - _lastRoutedBusPosition!.latitude).abs();
+              final dLng = (_busLocation!.longitude - _lastRoutedBusPosition!.longitude).abs();
+              if (dLat > 0.0004 || dLng > 0.0004) {
+                shouldFetchRoute = true;
+              }
+            }
+          }
+
+          if (shouldFetchRoute) {
+            _lastRouteFetchTime = now;
+            _lastRoutedBusPosition = _busLocation;
+            _fetchRoadRoute(_busLocation!, _homeLocation!, _schoolLocation, _routeStops);
+          }
         }
 
         // Fit camera once on first successful data load

@@ -3,7 +3,24 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ApiService {
-  static const String baseUrl = 'https://gps.khanhub.site/api/mobile';
+  static const String defaultBaseUrl = 'https://gps.khanhub.site/api/mobile';
+  static String baseUrl = defaultBaseUrl;
+
+  static Future<void> initBaseUrl() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedUrl = prefs.getString('custom_api_url');
+      if (savedUrl != null && savedUrl.trim().isNotEmpty) {
+        baseUrl = savedUrl.trim().replaceAll(RegExp(r'/+$'), '');
+      }
+    } catch (_) {}
+  }
+
+  static Future<void> setBaseUrl(String newUrl) async {
+    baseUrl = newUrl.trim().replaceAll(RegExp(r'/+$'), '');
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('custom_api_url', baseUrl);
+  }
 
   static Map<String, dynamic> _safeDecode(String body) {
     try {
