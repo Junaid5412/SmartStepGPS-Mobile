@@ -8,3 +8,9 @@
 
 # Keep annotations
 -keepattributes *Annotation*
+
+# Google Play Core (required for Flutter deferred components)
+-dontwarn com.google.android.play.core.**
+-keep class com.google.android.play.core.splitcompat.** { *; }
+-keep class com.google.android.play.core.splitinstall.** { *; }
+-keep class com.google.android.play.core.tasks.** { *; }
