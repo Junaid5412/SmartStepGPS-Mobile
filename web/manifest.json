@@ -1,6 +1,6 @@
 {
-    "name": "smart_step_gps",
-    "short_name": "smart_step_gps",
+    "name": "Smart GPS",
+    "short_name": "Smart GPS",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

@@ -366,7 +366,7 @@ class _MapScreenState extends State<MapScreen> {
                   children: [
                     TileLayer(
                       urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                      userAgentPackageName: 'com.smartstepgps.mobile',
+                      userAgentPackageName: 'com.smartstepgps.app',
                     ),
 
                     // Road-wise Polyline (following real road geometry via OSRM)

@@ -1,4 +1,4 @@
-package com.example.smart_step_gps
+package com.smartstepgps.app
 
 import io.flutter.embedding.android.FlutterActivity
 
