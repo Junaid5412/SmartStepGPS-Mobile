@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -17,7 +18,7 @@ class MapScreen extends StatefulWidget {
   State<MapScreen> createState() => _MapScreenState();
 }
 
-class _MapScreenState extends State<MapScreen> {
+class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   final MapController _mapController = MapController();
   Timer? _timer;
 
@@ -27,9 +28,16 @@ class _MapScreenState extends State<MapScreen> {
   Map<String, dynamic> _timings = {};
 
   // Locations
-  LatLng? _busLocation;
+  LatLng? _busLocation;       // latest raw GPS position from API
+  LatLng? _displayBusLocation; // interpolated position for rendering (smooth)
+  LatLng? _previousBusLocation; // previous raw GPS position (for animation start)
   double _speed = 0.0;
   String _lastUpdated = '';
+  double _busBearing = 0.0;   // heading in degrees (0=north, 90=east)
+
+  // Smooth marker animation
+  AnimationController? _markerAnimController;
+  bool _cameraFollowBus = true; // auto-pan camera to follow bus
 
   LatLng? _homeLocation;
   String _homeAddress = '';
@@ -61,6 +69,7 @@ class _MapScreenState extends State<MapScreen> {
   @override
   void dispose() {
     _timer?.cancel();
+    _markerAnimController?.dispose();
     super.dispose();
   }
 
@@ -188,11 +197,15 @@ class _MapScreenState extends State<MapScreen> {
           _homeLocation = homePos;
           _homeAddress = homeAddr;
           _routeStops = stops;
-          _busLocation = busPos;
           _speed = spd;
           _lastUpdated = upd;
           _isLoading = false;
         });
+
+        // Smooth animate bus marker to new position (Uber-style glide)
+        if (busPos != null) {
+          _animateBusTo(busPos);
+        }
 
         // Fetch road routing polyline if bus & destination exist (throttled to avoid OSRM rate limits)
         if (_busLocation != null && _homeLocation != null) {
@@ -299,6 +312,100 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
+  /// ─── Uber-Style Smooth Marker Animation ───────────────────────────────
+  /// Smoothly glides bus marker from current position to [target] over 2.5s
+  /// using 60fps interpolation with ease-out physics.
+  void _animateBusTo(LatLng target) {
+    // First position: no animation needed, just place the marker
+    if (_busLocation == null && _displayBusLocation == null) {
+      setState(() {
+        _busLocation = target;
+        _displayBusLocation = target;
+      });
+      return;
+    }
+
+    // Determine animation start point
+    final from = _displayBusLocation ?? _busLocation ?? target;
+
+    // Skip animation if position hasn't meaningfully changed (<2m)
+    final dLat = (target.latitude - from.latitude).abs();
+    final dLng = (target.longitude - from.longitude).abs();
+    if (dLat < 0.00002 && dLng < 0.00002) {
+      // Position basically unchanged — just update raw, no animation
+      _busLocation = target;
+      return;
+    }
+
+    // Calculate heading/bearing for bus icon rotation
+    _busBearing = _calculateBearing(from, target);
+
+    // Save previous → new positions
+    _previousBusLocation = from;
+    _busLocation = target;
+
+    // Stop any running animation
+    _markerAnimController?.stop();
+    _markerAnimController?.dispose();
+
+    // Create new animation: 2.5s ease-out glide (matches poll interval)
+    _markerAnimController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2500),
+    );
+
+    // Curved animation for natural deceleration (like Uber)
+    final curved = CurvedAnimation(
+      parent: _markerAnimController!,
+      curve: Curves.easeOutCubic,
+    );
+
+    // On each frame: interpolate position and optionally pan camera
+    curved.addListener(() {
+      if (!mounted) return;
+      final t = curved.value;
+      final interpolated = _lerpLatLng(_previousBusLocation!, _busLocation!, t);
+
+      setState(() {
+        _displayBusLocation = interpolated;
+      });
+
+      // Smooth camera follow (only while bus is moving at >3 km/h)
+      if (_cameraFollowBus && _speed > 3 && t < 0.95) {
+        // Don't fight user's manual pan — only follow during active movement
+        try {
+          _mapController.move(interpolated, _mapController.camera.zoom);
+        } catch (_) {}
+      }
+    });
+
+    // Start the glide
+    _markerAnimController!.forward();
+  }
+
+  /// Linear interpolation between two LatLng points
+  LatLng _lerpLatLng(LatLng a, LatLng b, double t) {
+    return LatLng(
+      a.latitude + (b.latitude - a.latitude) * t,
+      a.longitude + (b.longitude - a.longitude) * t,
+    );
+  }
+
+  /// Calculate bearing (heading) in degrees from point [a] to point [b]
+  /// Uses spherical law of cosines: accurate for short GPS distances
+  double _calculateBearing(LatLng a, LatLng b) {
+    final lat1 = a.latitude * math.pi / 180;
+    final lat2 = b.latitude * math.pi / 180;
+    final dLng = (b.longitude - a.longitude) * math.pi / 180;
+
+    final y = math.sin(dLng) * math.cos(lat2);
+    final x = math.cos(lat1) * math.sin(lat2) -
+        math.sin(lat1) * math.cos(lat2) * math.cos(dLng);
+
+    final bearing = math.atan2(y, x) * 180 / math.pi;
+    return (bearing + 360) % 360; // Normalize to 0-360
+  }
+
   void _fitAllMarkers() {
     final points = <LatLng>[];
     if (_busLocation != null) points.add(_busLocation!);
@@ -382,8 +489,14 @@ class _MapScreenState extends State<MapScreen> {
                 FlutterMap(
                   mapController: _mapController,
                   options: MapOptions(
-                    initialCenter: _busLocation ?? _homeLocation ?? _schoolLocation ?? const LatLng(25.2854, 51.5310),
+                    initialCenter: _displayBusLocation ?? _busLocation ?? _homeLocation ?? _schoolLocation ?? const LatLng(25.2854, 51.5310),
                     initialZoom: 15.0,
+                    // Disable follow mode when user manually pans the map (like Uber)
+                    onPositionChanged: (pos, hasGesture) {
+                      if (hasGesture && _cameraFollowBus) {
+                        setState(() => _cameraFollowBus = false);
+                      }
+                    },
                   ),
                   children: [
                     TileLayer(
@@ -436,10 +549,10 @@ class _MapScreenState extends State<MapScreen> {
                             ),
                           ),
 
-                        // 3. Live Bus Marker
-                        if (_busLocation != null)
+                        // 3. Live Bus Marker (uses smoothly interpolated position)
+                        if (_displayBusLocation != null)
                           Marker(
-                            point: _busLocation!,
+                            point: _displayBusLocation!,
                             width: 75,
                             height: 75,
                             child: _buildBusMarker(),
@@ -477,12 +590,26 @@ class _MapScreenState extends State<MapScreen> {
                         onTap: _fitAllMarkers,
                       ),
                       const SizedBox(height: 8),
-                      if (_busLocation != null)
+                      // Camera follow toggle (like Uber's recenter)
+                      if (_displayBusLocation != null)
+                        _buildFloatingAction(
+                          icon: _cameraFollowBus ? Icons.gps_fixed_rounded : Icons.gps_not_fixed_rounded,
+                          tooltip: _cameraFollowBus ? 'Following Bus (Tap to unlock)' : 'Tap to follow Bus',
+                          color: _cameraFollowBus ? const Color(0xFF2E7D32) : const Color(0xFF757575),
+                          onTap: () {
+                            setState(() => _cameraFollowBus = !_cameraFollowBus);
+                            if (_cameraFollowBus && _displayBusLocation != null) {
+                              _mapController.move(_displayBusLocation!, 16.5);
+                            }
+                          },
+                        ),
+                      const SizedBox(height: 8),
+                      if (_displayBusLocation != null)
                         _buildFloatingAction(
                           icon: Icons.directions_bus_rounded,
                           tooltip: 'Recenter Bus',
                           color: const Color(0xFFE65100),
-                          onTap: () => _mapController.move(_busLocation!, 16.5),
+                          onTap: () => _mapController.move(_displayBusLocation!, 16.5),
                         ),
                       if (_homeLocation != null) ...[
                         const SizedBox(height: 8),
@@ -565,11 +692,15 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  /// Bus Marker with Speed pill & pulsating styling
+  /// Bus Marker with Speed pill, heading rotation & pulsating styling
   Widget _buildBusMarker() {
+    // Only rotate when actually moving (speed > 3 km/h)
+    final bool isMoving = _speed > 3;
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
+        // Speed pill (always upright, never rotated)
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
           decoration: BoxDecoration(
@@ -585,11 +716,14 @@ class _MapScreenState extends State<MapScreen> {
                 Container(
                   width: 6,
                   height: 6,
-                  decoration: const BoxDecoration(color: Colors.greenAccent, shape: BoxShape.circle),
+                  decoration: BoxDecoration(
+                    color: isMoving ? Colors.greenAccent : Colors.orangeAccent,
+                    shape: BoxShape.circle,
+                  ),
                 ),
                 const SizedBox(width: 4),
                 Text(
-                  '${_speed.toInt()} km/h',
+                  isMoving ? '${_speed.toInt()} km/h' : 'STOPPED',
                   style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
                 ),
               ] else
@@ -601,15 +735,25 @@ class _MapScreenState extends State<MapScreen> {
           ),
         ),
         const SizedBox(height: 2),
-        Container(
-          padding: const EdgeInsets.all(7),
-          decoration: BoxDecoration(
-            color: _isActiveWindow ? const Color(0xFFFF8F00) : Colors.blueGrey,
-            shape: BoxShape.circle,
-            border: Border.all(color: Colors.white, width: 2.5),
-            boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 5, offset: Offset(0, 3))],
+        // Bus icon circle — rotates to face direction of travel
+        Transform.rotate(
+          angle: isMoving ? _busBearing * math.pi / 180 : 0,
+          child: Container(
+            padding: const EdgeInsets.all(7),
+            decoration: BoxDecoration(
+              color: _isActiveWindow
+                  ? (isMoving ? const Color(0xFFFF8F00) : const Color(0xFF78909C))
+                  : Colors.blueGrey,
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 2.5),
+              boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 5, offset: Offset(0, 3))],
+            ),
+            child: Icon(
+              isMoving ? Icons.navigation_rounded : Icons.directions_bus_rounded,
+              color: Colors.white,
+              size: 24,
+            ),
           ),
-          child: const Icon(Icons.directions_bus_rounded, color: Colors.white, size: 24),
         ),
       ],
     );
@@ -839,7 +983,10 @@ class _MapScreenState extends State<MapScreen> {
                   ),
                 );
                 _fetchLocation();
-                if (_busLocation != null) {
+                setState(() => _cameraFollowBus = true);
+                if (_displayBusLocation != null) {
+                  _mapController.move(_displayBusLocation!, 16.5);
+                } else if (_busLocation != null) {
                   _mapController.move(_busLocation!, 16.5);
                 } else if (_homeLocation != null) {
                   _mapController.move(_homeLocation!, 16.5);
