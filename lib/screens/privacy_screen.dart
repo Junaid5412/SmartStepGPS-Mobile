@@ -32,7 +32,7 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
         });
         return;
       }
-    } catch (_) {}
+    } catch (e) { debugPrint('Privacy: could not load settings from server: $e'); }
 
     // Fallback default privacy
     setState(() {
@@ -43,10 +43,10 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
 
   static const String _defaultPrivacy = '''
 1. Information Collection
-We collect location data strictly to track fleet vehicles. We do not track individual devices beyond the installed GPS units on the buses.
+We collect location data strictly to track fleet vehicles via installed GPS units. Additionally, the mobile app may request foreground location access on your personal device solely to display your position on the map relative to the school bus. We do not track your personal device in the background.
 
 2. Data Usage
-Location data is used solely to provide ETAs, route optimization, and safety monitoring for enrolled students.
+Vehicle location data is used to provide ETAs, route optimization, and safety monitoring. Your personal device location is used ephemerally on your screen and is not stored on our servers.
 
 3. Data Protection
 All personal data regarding students and parents is encrypted and strictly accessible only by authorized school admins, transport supervisors, and parents.

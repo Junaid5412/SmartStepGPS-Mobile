@@ -43,3 +43,11 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# --- Signing secrets: never commit. The upload key cannot be rotated without a
+# --- Google key reset, so a single leak is permanent.
+android/key.properties
+**/key.properties
+*.jks
+*.keystore
+android/local.properties

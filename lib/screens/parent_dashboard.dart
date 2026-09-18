@@ -112,7 +112,7 @@ class _ParentDashboardState extends State<ParentDashboard> {
           await prefs.setString('user_name', dName);
         }
       }
-    } catch (_) {}
+    } catch (e) { debugPrint('Parent dashboard: profile load failed: $e'); }
   }
 
   Future<void> _loadSettings() async {
@@ -136,7 +136,7 @@ class _ParentDashboardState extends State<ParentDashboard> {
           }
         });
       }
-    } catch (_) {}
+    } catch (e) { debugPrint('Parent dashboard: settings load failed: $e'); }
   }
 
   Future<void> _fetchStudents() async {
@@ -147,6 +147,7 @@ class _ParentDashboardState extends State<ParentDashboard> {
       } else if (res['error'] == 'Invalid token' || res['error'] == 'No token provided') {
         final prefs = await SharedPreferences.getInstance();
         await prefs.clear();
+        await ApiService.clearToken();
         Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const LoginScreen()));
         return;
       }
@@ -159,6 +160,7 @@ class _ParentDashboardState extends State<ParentDashboard> {
   void _logout() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.clear();
+    await ApiService.clearToken();
     Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const LoginScreen()));
   }
 
@@ -201,7 +203,7 @@ class _ParentDashboardState extends State<ParentDashboard> {
       } else if (clean.length == 8) {
         return Color(int.parse('0x$clean'));
       }
-    } catch (_) {}
+    } catch (_) { /* malformed colour from the server - the caller's fallback colour is used */ }
     return fallback;
   }
 

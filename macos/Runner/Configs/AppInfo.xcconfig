@@ -8,7 +8,7 @@
 PRODUCT_NAME = Smart GPS
 
 // The application's bundle identifier
-PRODUCT_BUNDLE_IDENTIFIER = com.smartstepgps.app
+PRODUCT_BUNDLE_IDENTIFIER = com.smartstep.gps
 
 // The copyright displayed in application information
 PRODUCT_COPYRIGHT = Copyright © 2026 Smart Step GPS. All rights reserved.

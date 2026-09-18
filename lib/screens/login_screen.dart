@@ -68,7 +68,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
           _logoUrl = settings['logo'] ?? '';
         });
       }
-    } catch (_) {}
+    } catch (e) { debugPrint('Login: could not load branding settings: $e'); }
   }
 
   void _login() async {
@@ -80,15 +80,21 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     }
     setState(() => _isLoading = true);
     try {
+      // Empty, not 'DUMMY_FCM_TOKEN'. Push notifications are not wired up in this build - there is
+      // no firebase_messaging dependency and no google-services.json - so there is no real token to
+      // send. Sending a placeholder wrote the literal string "DUMMY_FCM_TOKEN" into every user's
+      // fcm_token column, and api/mobile/attendance.php then tried to push to it on every pickup,
+      // filling logs/fcm.log with deliveries that never happened. An empty value is stored as NULL,
+      // which is the truth: we have no way to reach this device.
       final result = await ApiService.login(
         _usernameController.text.trim(),
         _passwordController.text.trim(),
-        'DUMMY_FCM_TOKEN',
+        '',
       );
       setState(() => _isLoading = false);
       if (result['success'] == true) {
         final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('api_token', result['token']);
+        await ApiService.setToken(result['token']);
         await prefs.setString('role', result['role']);
         if (result['user'] != null && result['user']['name'] != null) {
           await prefs.setString('user_name', result['user']['name']);

@@ -31,7 +31,7 @@ class _TermsScreenState extends State<TermsScreen> {
         });
         return;
       }
-    } catch (_) {}
+    } catch (e) { debugPrint('Terms: could not load settings from server: $e'); }
 
     // Fallback default terms
     setState(() {

@@ -187,14 +187,47 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     }
   }
 
+  /// Opens the attendance location in the device's map app.
+  ///
+  /// Every failure here used to be swallowed, so tapping the location simply did nothing and the
+  /// parent had no idea whether the tap registered, the coordinates were missing, or no map app was
+  /// installed. Each of those now says so.
   Future<void> _openInMap(dynamic lat, dynamic lng) async {
-    if (lat == null || lng == null) return;
-    final url = Uri.parse('https://www.google.com/maps/search/?api=1&query=$lat,$lng');
+    // 0,0 is a real coordinate in the Atlantic. Older app builds stamped every attendance event
+    // with it, so treat it as "no location" rather than sending the parent to the ocean.
+    final dLat = double.tryParse('$lat');
+    final dLng = double.tryParse('$lng');
+    final hasFix = dLat != null && dLng != null &&
+        !(dLat.abs() < 0.0001 && dLng.abs() < 0.0001) &&
+        dLat.abs() <= 90 && dLng.abs() <= 180;
+
+    if (!hasFix) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('No location was recorded for this attendance event.'),
+        backgroundColor: Colors.orange,
+      ));
+      return;
+    }
+
+    final url = Uri.parse('https://www.google.com/maps/search/?api=1&query=$dLat,$dLng');
     try {
       if (await canLaunchUrl(url)) {
         await launchUrl(url, mode: LaunchMode.externalApplication);
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('No map application is available on this device.'),
+          backgroundColor: Colors.orange,
+        ));
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('Attendance: could not open map: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Could not open the map. Please try again.'),
+        backgroundColor: Colors.redAccent,
+      ));
+    }
   }
 
   @override

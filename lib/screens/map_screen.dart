@@ -92,6 +92,32 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
+        // Show Prominent Disclosure (Google Play Policy)
+        bool shouldRequest = await showDialog(
+              context: context,
+              barrierDismissible: false,
+              builder: (ctx) => AlertDialog(
+                title: const Text('Location Access Required'),
+                content: const Text(
+                  'Smart Step GPS needs to access your location to display your position on the map relative to the school bus. '
+                  'This helps you see how far you are from the bus stop.',
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: const Text('Deny', style: TextStyle(color: Colors.grey)),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    child: const Text('Allow'),
+                  ),
+                ],
+              ),
+            ) ??
+            false;
+
+        if (!shouldRequest) return;
+
         permission = await Geolocator.requestPermission();
         if (permission == LocationPermission.denied) return;
       }
@@ -375,7 +401,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         // Don't fight user's manual pan — only follow during active movement
         try {
           _mapController.move(interpolated, _mapController.camera.zoom);
-        } catch (_) {}
+        } catch (e) { debugPrint('Map follow-camera move skipped: $e'); }
       }
     });
 
@@ -501,7 +527,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                   children: [
                     TileLayer(
                       urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                      userAgentPackageName: 'com.smartstepgps.app',
+                      userAgentPackageName: 'com.smartstep.gps',
                     ),
 
                     // Road-wise Polyline (following real road geometry via OSRM)

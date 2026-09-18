@@ -134,6 +134,91 @@ class _ParentProfileScreenState extends State<ParentProfileScreen> {
     }
   }
 
+  /// Raises a real deletion request against the API and reports what actually happened.
+  ///
+  /// The previous version called no API at all: it closed the dialog and showed a green
+  /// "request submitted" message, while telling the user their data would be "permanently deleted
+  /// within 30 days". Nothing was recorded and nobody was notified. The wording below now matches
+  /// what the system genuinely does - an administrator reviews the request, and the child's school
+  /// records are deliberately retained.
+  Future<void> _showDeleteAccountDialog(BuildContext context) async {
+    final reasonCtrl = TextEditingController();
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext ctx) => AlertDialog(
+        title: const Text('Delete Account',
+            style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Your request will be sent to your school administrator for review.\n\n'
+              'Once approved, your account, sign-in details and personal information are '
+              'permanently deleted and you will be signed out.\n\n'
+              'Your child\'s enrolment, bus allocation and past attendance records are kept by '
+              'the school, as those are school records.',
+              style: TextStyle(fontSize: 13.5),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: reasonCtrl,
+              maxLength: 255,
+              minLines: 1,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'Reason (optional)',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Request Deletion',
+                style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
+    Map<String, dynamic> res;
+    try {
+      res = await ApiService.requestAccountDeletion(reason: reasonCtrl.text.trim());
+    } catch (e) {
+      res = {'success': false, 'message': 'Could not reach the server. Please try again.'};
+    }
+    if (!mounted) return;
+    Navigator.of(context).pop(); // dismiss the spinner
+
+    final ok = res['success'] == true;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(
+        (res['message'] as String?) ??
+            (ok
+                ? 'Your deletion request has been submitted for review.'
+                : 'Could not submit your request. Please contact your school.'),
+      ),
+      backgroundColor: ok ? Colors.green.shade700 : Colors.red.shade700,
+      duration: const Duration(seconds: 5),
+    ));
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -232,6 +317,28 @@ class _ParentProfileScreenState extends State<ParentProfileScreen> {
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.teal[700],
                           foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                      ),
+                    ),
+                  const SizedBox(height: 30),
+                  // Delete Account Section (Google Play Store Policy)
+                  _buildSectionHeader(Icons.warning_amber_rounded, 'Account Management', Colors.red),
+                  _buildCard([
+                    const Text(
+                      'If you wish to delete your account and remove all associated data from our servers, you can initiate a deletion request.',
+                      style: TextStyle(fontSize: 12, color: Colors.black54),
+                    ),
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 44,
+                      child: OutlinedButton.icon(
+                        onPressed: () => _showDeleteAccountDialog(context),
+                        icon: const Icon(Icons.delete_forever, color: Colors.red),
+                        label: const Text('Request Account Deletion', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(color: Colors.red),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                         ),
                       ),

@@ -59,7 +59,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
           });
         }
       }
-    } catch (_) {}
+    } catch (e) { debugPrint('Splash: could not load settings from server: $e'); }
 
     // Ensure at least 1.8 seconds of splash time for smooth UX
     final elapsed = stopwatch.elapsedMilliseconds;
@@ -71,7 +71,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
 
     // Check user session
     final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('api_token');
+    final token = await ApiService.getToken();
     final role = prefs.getString('role');
 
     Widget destination;

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/api_service.dart';
@@ -177,13 +178,50 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
     }
   }
 
+  /// Where the monitor is standing when they mark a child.
+  ///
+  /// Returns null rather than a placeholder if the fix cannot be obtained. The previous code passed
+  /// a hardcoded 0.0, 0.0 on every single call, so every attendance row was stamped with the middle
+  /// of the Atlantic and the portal - correctly - reported "No GPS Stamp" for all of them.
+  ///
+  /// Never blocks the marking itself: a monitor with no signal must still be able to record that a
+  /// child boarded. The stamp is evidence, not a precondition.
+  Future<Position?> _currentPosition() async {
+    try {
+      if (!await Geolocator.isLocationServiceEnabled()) return null;
+      var perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied) {
+        perm = await Geolocator.requestPermission();
+      }
+      if (perm == LocationPermission.denied || perm == LocationPermission.deniedForever) return null;
+
+      return await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      ).timeout(const Duration(seconds: 6));
+    } catch (e) {
+      debugPrint('Attendance GPS stamp unavailable: $e');
+      return null;   // mark attendance anyway
+    }
+  }
+
   Future<void> _executeMarkAttendance(int studentId, String type) async {
-    final response = await ApiService.markAttendance(studentId, type, 0.0, 0.0, shift: _activeShift);
+    final pos = await _currentPosition();
+    if (!mounted) return;
+
+    final response = await ApiService.markAttendance(
+      studentId, type, pos?.latitude, pos?.longitude, shift: _activeShift);
+    if (!mounted) return;
+
     if (response['success'] == true) {
+      final shiftLabel = _activeShift == 'morning' ? 'Morning' : 'Afternoon';
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Attendance recorded for ${_activeShift == 'morning' ? 'Morning' : 'Afternoon'} shift!'),
-        backgroundColor: type == 'dropoff' ? Colors.green : (type == 'pickup' ? Colors.blue : Colors.orange),
-        duration: const Duration(seconds: 1),
+        content: Text(pos == null
+            ? 'Attendance recorded for $shiftLabel shift (no GPS stamp — location unavailable)'
+            : 'Attendance recorded for $shiftLabel shift!'),
+        backgroundColor: pos == null
+            ? Colors.orange.shade800
+            : (type == 'dropoff' ? Colors.green : (type == 'pickup' ? Colors.blue : Colors.orange)),
+        duration: Duration(seconds: pos == null ? 3 : 1),
       ));
       _loadRoster();
     } else {
@@ -242,9 +280,82 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
     );
   }
 
+  /// Raises a real deletion request. This previously showed a green "request submitted" message
+  /// without calling anything, so no request ever reached the school.
+  Future<void> _requestAccountDeletion() async {
+    final reasonCtrl = TextEditingController();
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Account', style: TextStyle(color: Colors.red)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Your request will be sent to your school administrator for review.\n\n'
+              'Once approved, your staff account and personal details are permanently deleted '
+              'and you will be signed out.\n\n'
+              'Attendance records you submitted are kept by the school as safeguarding records.',
+              style: TextStyle(fontSize: 13.5),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: reasonCtrl,
+              maxLength: 255,
+              minLines: 1,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'Reason (optional)',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Request Deletion', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
+    Map<String, dynamic> res;
+    try {
+      res = await ApiService.requestAccountDeletion(reason: reasonCtrl.text.trim());
+    } catch (e) {
+      res = {'success': false, 'message': 'Could not reach the server. Please try again.'};
+    }
+    if (!mounted) return;
+    Navigator.of(context).pop(); // dismiss the spinner
+
+    final ok = res['success'] == true;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text((res['message'] as String?) ??
+          (ok
+              ? 'Your deletion request has been submitted for review.'
+              : 'Could not submit your request. Please contact your school.')),
+      backgroundColor: ok ? Colors.green.shade700 : Colors.red.shade700,
+      duration: const Duration(seconds: 5),
+    ));
+  }
+
   void _logout() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.clear();
+    await ApiService.clearToken();
     Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const LoginScreen()));
   }
 
@@ -336,7 +447,7 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
         String minuteStr = minute.toString().padLeft(2, '0');
         return '$displayHour:$minuteStr $ampm';
       }
-    } catch (_) {}
+    } catch (_) { /* unparseable time string - fall through and return it verbatim below */ }
     return timeStr;
   }
 
@@ -599,6 +710,14 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
             ),
             const Spacer(),
             const Divider(),
+            ListTile(
+              leading: const Icon(Icons.delete_forever, color: Colors.orange),
+              title: const Text('Delete Account', style: TextStyle(color: Colors.orange, fontWeight: FontWeight.w600)),
+              onTap: () {
+                Navigator.pop(context);
+                _requestAccountDeletion();
+              },
+            ),
             ListTile(
               leading: const Icon(Icons.logout, color: Colors.redAccent),
               title: const Text('Sign Out', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w600)),

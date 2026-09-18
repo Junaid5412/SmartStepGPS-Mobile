@@ -1,25 +1,78 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class ApiService {
   static const String defaultBaseUrl = 'https://gps.khanhub.site/api/mobile';
   static String baseUrl = defaultBaseUrl;
+
+  static const _secureStorage = FlutterSecureStorage();
+
+  static Future<String> getToken() async {
+    String? token = await _secureStorage.read(key: 'api_token');
+    if (token != null && token.isNotEmpty) return token;
+
+    // Fallback/Migration from SharedPreferences
+    final prefs = await SharedPreferences.getInstance();
+    token = prefs.getString('api_token');
+    if (token != null && token.isNotEmpty) {
+      await _secureStorage.write(key: 'api_token', value: token);
+      await prefs.remove('api_token');
+      return token;
+    }
+    return '';
+  }
+
+  static Future<void> setToken(String token) async {
+    await _secureStorage.write(key: 'api_token', value: token);
+  }
+
+  static Future<void> clearToken() async {
+    await _secureStorage.delete(key: 'api_token');
+  }
+
+  /// Only an https URL on a host we own may replace the base URL.
+  ///
+  /// This override is read from SharedPreferences, which is plain, unencrypted XML inside the app
+  /// sandbox - readable on a rooted or debuggable device. Previously any string was accepted, so
+  /// writing `http://attacker.example/` there would have sent every request, including the login
+  /// credentials and the Bearer token, to that host in cleartext. Scheme and host are now both
+  /// checked, and anything that fails falls back to the built-in default.
+  static const List<String> _allowedHosts = ['gps.khanhub.site'];
+
+  static bool _isAllowedUrl(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return false;
+    if (uri.scheme != 'https') return false;
+    return _allowedHosts.contains(uri.host);
+  }
 
   static Future<void> initBaseUrl() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final savedUrl = prefs.getString('custom_api_url');
       if (savedUrl != null && savedUrl.trim().isNotEmpty) {
-        baseUrl = savedUrl.trim().replaceAll(RegExp(r'/+$'), '');
+        final cleaned = savedUrl.trim().replaceAll(RegExp(r'/+$'), '');
+        if (_isAllowedUrl(cleaned)) {
+          baseUrl = cleaned;
+        } else {
+          // Tampered or stale value - discard it and go back to the default.
+          await prefs.remove('custom_api_url');
+          baseUrl = defaultBaseUrl;
+        }
       }
-    } catch (_) {}
+    } catch (e) { debugPrint('ApiService: could not read saved base URL: $e'); }
   }
 
-  static Future<void> setBaseUrl(String newUrl) async {
-    baseUrl = newUrl.trim().replaceAll(RegExp(r'/+$'), '');
+  static Future<bool> setBaseUrl(String newUrl) async {
+    final cleaned = newUrl.trim().replaceAll(RegExp(r'/+$'), '');
+    if (!_isAllowedUrl(cleaned)) return false;
+    baseUrl = cleaned;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('custom_api_url', baseUrl);
+    return true;
   }
 
   static Map<String, dynamic> _safeDecode(String body) {
@@ -36,7 +89,7 @@ class ApiService {
           final sub = body.substring(firstBrace, lastBrace + 1);
           final decoded = jsonDecode(sub);
           if (decoded is Map<String, dynamic>) return decoded;
-        } catch (_) {}
+        } catch (_) { /* this was only a best-effort retry; the HTML-stripping fallback below still runs */ }
       }
       // Remove HTML tags if server threw an error page
       final clean = body.replaceAll(RegExp(r'<[^>]*>'), ' ').trim();
@@ -67,7 +120,7 @@ class ApiService {
 
   static Future<Map<String, dynamic>> getParentStudents() async {
     final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('api_token') ?? '';
+    final token = await getToken();
     final response = await http.get(
       Uri.parse('$baseUrl/parent_students.php'),
       headers: {'Authorization': 'Bearer $token'},
@@ -77,7 +130,7 @@ class ApiService {
 
   static Future<Map<String, dynamic>> getBusLocation(int deviceId, {int? studentId}) async {
     final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('api_token') ?? '';
+    final token = await getToken();
     String url = '$baseUrl/bus_location.php?device_id=$deviceId';
     if (studentId != null && studentId > 0) {
       url += '&student_id=$studentId';
@@ -91,7 +144,7 @@ class ApiService {
 
   static Future<Map<String, dynamic>> getAttendanceHistory(int studentId) async {
     final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('api_token') ?? '';
+    final token = await getToken();
     final response = await http.get(
       Uri.parse('$baseUrl/attendance_history.php?student_id=$studentId'),
       headers: {'Authorization': 'Bearer $token'},
@@ -101,7 +154,7 @@ class ApiService {
 
   static Future<Map<String, dynamic>> getLeaveRequests() async {
     final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('api_token') ?? '';
+    final token = await getToken();
     final response = await http.get(
       Uri.parse('$baseUrl/leave_request.php'),
       headers: {'Authorization': 'Bearer $token'},
@@ -111,7 +164,7 @@ class ApiService {
 
   static Future<Map<String, dynamic>> submitLeave(int studentId, String leaveDate, String reason, String comment) async {
     final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('api_token') ?? '';
+    final token = await getToken();
     final response = await http.post(
       Uri.parse('$baseUrl/leave_request.php'),
       headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
@@ -127,7 +180,7 @@ class ApiService {
 
   static Future<Map<String, dynamic>> getAnnouncements() async {
     final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('api_token') ?? '';
+    final token = await getToken();
     final response = await http.get(
       Uri.parse('$baseUrl/announcements.php'),
       headers: {'Authorization': 'Bearer $token'},
@@ -137,7 +190,7 @@ class ApiService {
 
   static Future<Map<String, dynamic>> getRoster() async {
     final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('api_token') ?? '';
+    final token = await getToken();
 
     final response = await http.get(
       Uri.parse('$baseUrl/roster.php'),
@@ -148,9 +201,14 @@ class ApiService {
     return _safeDecode(response.body);
   }
 
-  static Future<Map<String, dynamic>> markAttendance(int studentId, String eventType, double lat, double lng, {String shift = 'morning'}) async {
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('api_token') ?? '';
+  /// [lat]/[lng] are nullable on purpose. When the monitor has no usable fix we send JSON null, so
+  /// the server stores NULL and the portal can honestly say "No GPS Stamp" — rather than the old
+  /// behaviour of sending 0.0, 0.0, which recorded a real-looking coordinate off the coast of Africa
+  /// for every attendance event ever taken.
+  static Future<Map<String, dynamic>> markAttendance(
+      int studentId, String eventType, double? lat, double? lng,
+      {String shift = 'morning'}) async {
+    final token = await getToken();
 
     final response = await http.post(
       Uri.parse('$baseUrl/attendance.php'),
@@ -171,7 +229,7 @@ class ApiService {
 
   static Future<Map<String, dynamic>> getProfile() async {
     final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('api_token') ?? '';
+    final token = await getToken();
     final response = await http.get(
       Uri.parse('$baseUrl/profile.php'),
       headers: {'Authorization': 'Bearer $token'},
@@ -189,7 +247,7 @@ class ApiService {
     required String address,
   }) async {
     final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('api_token') ?? '';
+    final token = await getToken();
     final response = await http.post(
       Uri.parse('$baseUrl/profile.php'),
       headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
@@ -211,9 +269,31 @@ class ApiService {
     return data;
   }
 
+  /// Raises an account-deletion request. Nothing is deleted here: a school administrator reviews it,
+  /// and the account is removed only on approval.
+  static Future<Map<String, dynamic>> requestAccountDeletion({String reason = ''}) async {
+    final token = await getToken();
+    final response = await http.post(
+      Uri.parse('$baseUrl/delete_account.php'),
+      headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+      body: jsonEncode({'reason': reason}),
+    );
+    return _safeDecode(response.body);
+  }
+
+  /// Status of the most recent deletion request for the signed-in account, if any.
+  static Future<Map<String, dynamic>> getAccountDeletionStatus() async {
+    final token = await getToken();
+    final response = await http.get(
+      Uri.parse('$baseUrl/delete_account.php'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    return _safeDecode(response.body);
+  }
+
   static Future<Map<String, dynamic>> changePassword(String oldPassword, String newPassword) async {
     final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('api_token') ?? '';
+    final token = await getToken();
     final response = await http.post(
       Uri.parse('$baseUrl/profile.php'),
       headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},

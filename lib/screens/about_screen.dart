@@ -31,7 +31,7 @@ class _AboutScreenState extends State<AboutScreen> {
         });
         return;
       }
-    } catch (_) {}
+    } catch (e) { debugPrint('About: could not load settings from server: $e'); }
 
     // Fallback default about
     setState(() {
