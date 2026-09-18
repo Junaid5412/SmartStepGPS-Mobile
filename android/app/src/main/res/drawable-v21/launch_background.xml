@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Modify this file to customize your launch splash screen -->
+<!-- API 21+ variant of the launch window. Identical to drawable/launch_background.xml; the split
+     exists only because the Flutter template uses ?android:colorBackground here, and a theme
+     attribute cannot be resolved on older platforms. An explicit colour is used instead so the
+     splash is the same on every version rather than following the device's light/dark background. -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:drawable="?android:colorBackground" />
-
-    <!-- You can insert your own image assets here -->
-    <!-- <item>
+    <item android:drawable="@color/splash_background" />
+    <item>
         <bitmap
             android:gravity="center"
-            android:src="@mipmap/launch_image" />
-    </item> -->
+            android:src="@drawable/splash_logo" />
+    </item>
 </layer-list>

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dark mode on Android 12+.
+     This file has to exist. In Android's qualifier precedence the night qualifier outranks the
+     version qualifier, so on a dark-mode phone running API 31+ the values-night copy of LaunchTheme
+     would win over values-v31 and the SplashScreen attributes would silently be dropped - leaving
+     exactly the untouched default splash this change is meant to remove.
+     The splash is deliberately the same in both modes: the app's own UI is light. -->
+<resources>
+    <style name="LaunchTheme" parent="@android:style/Theme.Black.NoTitleBar">
+        <item name="android:windowBackground">@drawable/launch_background</item>
+        <item name="android:windowSplashScreenBackground">@color/splash_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/splash_background</item>
+    </style>
+    <style name="NormalTheme" parent="@android:style/Theme.Black.NoTitleBar">
+        <item name="android:windowBackground">?android:colorBackground</item>
+    </style>
+</resources>

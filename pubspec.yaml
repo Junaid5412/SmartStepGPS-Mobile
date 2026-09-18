@@ -30,7 +30,14 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/
+# Launcher icons. The source art is the monogram ALONE, pre-padded, not the full logo: the wordmark
+# is three lines of type that are unreadable at 48dp and get clipped by every circular launcher mask.
+# tool/icon/ is outside the bundled assets, so this artwork is not shipped inside the APK.
+# Regenerate with: dart run flutter_launcher_icons
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: "assets/images/logo.png"
+  min_sdk_android: 24
+  image_path: "tool/icon/icon_legacy.png"
+  adaptive_icon_background: "#F0F4F8"
+  adaptive_icon_foreground: "tool/icon/icon_foreground.png"

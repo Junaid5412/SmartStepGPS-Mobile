@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The app's own scaffold background (ThemeData.scaffoldBackgroundColor in lib/main.dart).
+         Used behind the launcher monogram and on the splash screen, so the app's first frame is a
+         continuation of what was already on screen rather than a flash of white. Plain white was
+         rejected because the silver half of the monogram washes out against it. -->
+    <color name="ic_launcher_background">#F0F4F8</color>
+    <color name="splash_background">#F0F4F8</color>
+</resources>

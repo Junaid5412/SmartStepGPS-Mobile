@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12 (API 31) and above.
+     From API 31 the platform draws the splash itself through the SplashScreen API and IGNORES
+     android:windowBackground, so the layer-list in drawable/launch_background.xml never appears on
+     a modern phone. Without these attributes Android falls back to the launcher icon on the
+     default system background, which is why the splash still looked untouched. -->
+<resources>
+    <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowBackground">@drawable/launch_background</item>
+        <item name="android:windowSplashScreenBackground">@color/splash_background</item>
+        <!-- The adaptive-icon foreground is reused deliberately: Android 12 shows the icon inside
+             the middle two thirds of its canvas, the same safe-zone proportion the adaptive icon
+             foreground is already built to, so the monogram lands correctly with no second asset. -->
+        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/splash_background</item>
+    </style>
+    <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowBackground">?android:colorBackground</item>
+    </style>
+</resources>

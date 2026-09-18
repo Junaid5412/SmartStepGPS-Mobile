@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Adaptive launcher icon (Android 8.0 / API 26 and above).
+     Without this file the launcher takes the legacy square bitmap and masks it itself, which
+     crops the artwork and leaves the icon visibly smaller and flatter than every other icon on
+     the home screen. The foreground is the Smart Step monogram alone, padded so its ink stays
+     inside the 72dp circle Android guarantees will survive any mask shape. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+    <monochrome android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>
