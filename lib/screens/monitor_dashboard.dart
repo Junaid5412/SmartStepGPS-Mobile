@@ -82,7 +82,7 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
         });
       } else {
         setState(() => _isLoading = false);
-        final err = response['error'] ?? 'Failed to load roster';
+        final err = response['error'] ?? 'Failed to load student list';
         if (err.toString().contains('Unauthorized') || err.toString().contains('token')) {
           _logout();
         } else {
@@ -126,6 +126,12 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
       actionLabel = 'ON LEAVE';
       actionColor = Colors.orange;
       actionDesc = 'Mark child as on approved leave today.';
+    } else if (type == 'by_parent') {
+      actionLabel = 'BY PARENTS (BP)';
+      actionColor = const Color(0xFF7C3AED);
+      actionDesc = _activeShift == 'morning'
+          ? 'Child is being taken to School by their own parent this morning. Counts as PRESENT - not an absence.'
+          : 'Child is being collected from School by their own parent this afternoon. Counts as PRESENT - not an absence.';
     }
 
     final shiftLabel = _activeShift == 'morning' ? 'Morning Shift' : 'Afternoon Shift';
@@ -136,10 +142,7 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(
           children: [
-            Icon(
-              type == 'dropoff' ? Icons.check_circle : (type == 'pickup' ? Icons.directions_bus : Icons.warning_amber),
-              color: actionColor,
-            ),
+            Icon(_getStatusIcon(type), color: actionColor),
             const SizedBox(width: 8),
             Text('Confirm $actionLabel', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           ],
@@ -271,6 +274,20 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
               onTap: () {
                 Navigator.pop(ctx);
                 _confirmAndMarkAttendance(studentId, studentName, 'leave');
+              },
+            ),
+            const Divider(),
+            ListTile(
+              leading: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(color: _byParentColor.withOpacity(0.1), shape: BoxShape.circle),
+                child: const Icon(Icons.family_restroom, color: _byParentColor),
+              ),
+              title: const Text('By Parents (BP)', style: TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: const Text('Parent is taking the child themselves — counts as PRESENT'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _confirmAndMarkAttendance(studentId, studentName, 'by_parent');
               },
             ),
             const SizedBox(height: 10),
@@ -615,6 +632,7 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
     int droppedCount = _students.where((s) => _getStudentStatus(s) != null && _getStudentStatus(s)['event_type'] == 'dropoff').length;
     int absentCount = _students.where((s) => _getStudentStatus(s) != null && _getStudentStatus(s)['event_type'] == 'absent').length;
     int leaveCount = _students.where((s) => _getStudentStatus(s) != null && _getStudentStatus(s)['event_type'] == 'leave').length;
+    int byParentCount = _students.where((s) => _getStudentStatus(s) != null && _getStudentStatus(s)['event_type'] == 'by_parent').length;
     int pendingCount = _students.where((s) => _getStudentStatus(s) == null).length;
 
     final filteredFamilies = _filteredFamilyGroups;
@@ -622,7 +640,7 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
     return Scaffold(
       backgroundColor: const Color(0xFFF0F4F8),
       appBar: AppBar(
-        title: const Text('Route Roster & Attendance', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+        title: const Text('Student List & Attendance', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
         backgroundColor: const Color(0xFF1565C0),
         elevation: 0,
         actions: [
@@ -678,7 +696,7 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
             ),
             ListTile(
               leading: const Icon(Icons.refresh, color: Colors.blueGrey),
-              title: const Text('Refresh Roster'),
+              title: const Text('Refresh Student List'),
               onTap: () {
                 Navigator.pop(context);
                 _loadRoster();
@@ -728,7 +746,7 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
         ),
       ),
       body: _isLoading
-          ? const CustomLoading(message: 'Loading student roster...')
+          ? const CustomLoading(message: 'Loading student list...')
           : RefreshIndicator(
               onRefresh: _loadRoster,
               child: CustomScrollView(
@@ -807,7 +825,7 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
                                 ],
                                 const SizedBox(height: 14),
 
-                                // 5 Separate Stat Pills: Pending, Picked Up, Dropped Off, Absent, On Leave
+                                // Stat pills: Pending, Picked Up, Dropped Off, Absent, On Leave, BP
                                 Row(
                                   children: [
                                     _buildStatPill('Pending', pendingCount, Colors.white70),
@@ -819,6 +837,10 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
                                     _buildStatPill('Absent', absentCount, const Color(0xFFFF8A80)),
                                     const SizedBox(width: 4),
                                     _buildStatPill('Leave', leaveCount, const Color(0xFFFFD180)),
+                                    const SizedBox(width: 4),
+                                    // Abbreviated to "BP" here only because six pills share one row;
+                                    // every other surface spells out "By Parents (BP)".
+                                    _buildStatPill('BP', byParentCount, const Color(0xFFD0BCFF)),
                                   ],
                                 ),
                               ],
@@ -842,6 +864,8 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
                                 _buildFilterChip('absent', 'Absent ($absentCount)'),
                                 const SizedBox(width: 6),
                                 _buildFilterChip('leave', 'On Leave ($leaveCount)'),
+                                const SizedBox(width: 6),
+                                _buildFilterChip('by_parent', 'By Parents ($byParentCount)'),
                               ],
                             ),
                           ),
@@ -1179,6 +1203,11 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
                     label: Text(
                       _activeShift == 'morning' ? 'Pick Up (Home)' : 'Pick Up (School)',
                       style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                      // Adding the BP button made this row four buttons wide. It still fits on a
+                      // 320dp screen, but with little to spare, so let the label shorten rather
+                      // than paint overflow stripes across the card on the narrowest phones.
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF1565C0),
@@ -1222,16 +1251,38 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
                   child: const Text('Leave', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
                 ),
               ),
+              const SizedBox(width: 6),
+
+              // By Parents (BP) Button
+              SizedBox(
+                height: 34,
+                child: OutlinedButton(
+                  onPressed: () => _confirmAndMarkAttendance(student['id'], studentName, 'by_parent'),
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: _byParentColor),
+                    foregroundColor: _byParentColor,
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  child: const Text('BP', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
+                ),
+              ),
             ],
           ),
       ],
     );
   }
 
+  // By Parents keeps its own colour throughout - purple. It must not look like an absence (red) and
+  // must not look like a bus event (blue/green), because it is neither: the child is present, they
+  // just are not travelling on the bus for this shift.
+  static const Color _byParentColor = Color(0xFF7C3AED);
+
   Color _getStatusBgColor(String? type) {
     if (type == 'dropoff') return Colors.green.withOpacity(0.12);
     if (type == 'pickup') return Colors.blue.withOpacity(0.12);
     if (type == 'leave') return Colors.orange.withOpacity(0.12);
+    if (type == 'by_parent') return _byParentColor.withOpacity(0.12);
     return Colors.red.withOpacity(0.12);
   }
 
@@ -1239,6 +1290,7 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
     if (type == 'dropoff') return Colors.green[800]!;
     if (type == 'pickup') return const Color(0xFF1565C0);
     if (type == 'leave') return Colors.orange[800]!;
+    if (type == 'by_parent') return _byParentColor;
     return Colors.redAccent;
   }
 
@@ -1246,6 +1298,7 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
     if (type == 'dropoff') return Icons.check_circle;
     if (type == 'pickup') return Icons.directions_bus;
     if (type == 'leave') return Icons.event_busy;
+    if (type == 'by_parent') return Icons.family_restroom;
     return Icons.cancel;
   }
 
@@ -1257,6 +1310,7 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
       return _activeShift == 'morning' ? 'ON BUS (TO SCHOOL)' : 'BOARDED AT SCHOOL';
     }
     if (type == 'leave') return 'ON LEAVE';
+    if (type == 'by_parent') return 'BY PARENTS (BP)';
     return 'ABSENT';
   }
 

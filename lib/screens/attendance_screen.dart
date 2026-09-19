@@ -167,6 +167,8 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         return const Color(0xFFC62828); // Red
       case 'leave':
         return const Color(0xFFEF6C00); // Orange
+      case 'by_parent':
+        return const Color(0xFF7C3AED); // Purple - present, but not a bus event
       default:
         return const Color(0xFF546E7A);
     }
@@ -182,6 +184,8 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         return Icons.cancel_outlined;
       case 'leave':
         return Icons.event_busy_rounded;
+      case 'by_parent':
+        return Icons.family_restroom;
       default:
         return Icons.check_circle_outline_rounded;
     }
@@ -549,6 +553,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     final hasDropoff = records.any((r) => r['event_type'] == 'dropoff');
     final hasAbsent = records.any((r) => r['event_type'] == 'absent');
     final hasLeave = records.any((r) => r['event_type'] == 'leave');
+    final hasByParent = records.any((r) => r['event_type'] == 'by_parent');
 
     return InkWell(
       onTap: () {
@@ -606,6 +611,8 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                     _buildDot(const Color(0xFFE53935), isSelected),
                   if (hasLeave)
                     _buildDot(const Color(0xFFFFB300), isSelected),
+                  if (hasByParent)
+                    _buildDot(const Color(0xFF7C3AED), isSelected),
                   if (records.isEmpty)
                     const SizedBox(width: 4),
                 ],
@@ -647,7 +654,12 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       final key = '$year-${month.toString().padLeft(2, '0')}-${d.toString().padLeft(2, '0')}';
       final recs = _recordsByDate[key];
       if (recs != null && recs.isNotEmpty) {
-        if (recs.any((r) => r['event_type'] == 'pickup' || r['event_type'] == 'dropoff')) {
+        // by_parent counts toward PRESENT. The child attended school that day; their own parent
+        // took them instead of the bus. Leaving it out would have made a BP day show as neither
+        // present nor absent, so the monthly totals silently would not add up.
+        if (recs.any((r) => r['event_type'] == 'pickup'
+                         || r['event_type'] == 'dropoff'
+                         || r['event_type'] == 'by_parent')) {
           presentDays++;
         }
         if (recs.any((r) => r['event_type'] == 'absent')) {
@@ -803,6 +815,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     if (eventType == 'dropoff') eventTitle = 'Afternoon Drop Off';
     if (eventType == 'absent') eventTitle = 'Marked Absent';
     if (eventType == 'leave') eventTitle = 'Approved Leave';
+    if (eventType == 'by_parent') eventTitle = 'By Parents (BP) — Present';
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
