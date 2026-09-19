@@ -321,7 +321,9 @@ class _ParentProfileScreenState extends State<ParentProfileScreen> {
                         ),
                       ),
                     ),
+                  ]),
                   const SizedBox(height: 30),
+
                   // Delete Account Section (Google Play Store Policy)
                   _buildSectionHeader(Icons.warning_amber_rounded, 'Account Management', Colors.red),
                   _buildCard([
