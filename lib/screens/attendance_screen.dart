@@ -14,7 +14,6 @@ class AttendanceScreen extends StatefulWidget {
 
 class _AttendanceScreenState extends State<AttendanceScreen> {
   int _selectedStudentIndex = 0;
-  List<dynamic> _records = [];
   final Map<String, List<dynamic>> _recordsByDate = {};
   bool _isLoading = false;
   String? _errorMessage;

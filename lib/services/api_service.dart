@@ -119,7 +119,6 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> getParentStudents() async {
-    final prefs = await SharedPreferences.getInstance();
     final token = await getToken();
     final response = await http.get(
       Uri.parse('$baseUrl/parent_students.php'),
@@ -129,7 +128,6 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> getBusLocation(int deviceId, {int? studentId}) async {
-    final prefs = await SharedPreferences.getInstance();
     final token = await getToken();
     String url = '$baseUrl/bus_location.php?device_id=$deviceId';
     if (studentId != null && studentId > 0) {
@@ -143,7 +141,6 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> getAttendanceHistory(int studentId) async {
-    final prefs = await SharedPreferences.getInstance();
     final token = await getToken();
     final response = await http.get(
       Uri.parse('$baseUrl/attendance_history.php?student_id=$studentId'),
@@ -153,7 +150,6 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> getLeaveRequests() async {
-    final prefs = await SharedPreferences.getInstance();
     final token = await getToken();
     final response = await http.get(
       Uri.parse('$baseUrl/leave_request.php'),
@@ -163,7 +159,6 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> submitLeave(int studentId, String leaveDate, String reason, String comment) async {
-    final prefs = await SharedPreferences.getInstance();
     final token = await getToken();
     final response = await http.post(
       Uri.parse('$baseUrl/leave_request.php'),
@@ -179,7 +174,6 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> getAnnouncements() async {
-    final prefs = await SharedPreferences.getInstance();
     final token = await getToken();
     final response = await http.get(
       Uri.parse('$baseUrl/announcements.php'),
@@ -189,7 +183,6 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> getRoster() async {
-    final prefs = await SharedPreferences.getInstance();
     final token = await getToken();
 
     final response = await http.get(
@@ -228,7 +221,6 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> getProfile() async {
-    final prefs = await SharedPreferences.getInstance();
     final token = await getToken();
     final response = await http.get(
       Uri.parse('$baseUrl/profile.php'),
@@ -246,7 +238,6 @@ class ApiService {
     required String motherEmail,
     required String address,
   }) async {
-    final prefs = await SharedPreferences.getInstance();
     final token = await getToken();
     final response = await http.post(
       Uri.parse('$baseUrl/profile.php'),
@@ -292,7 +283,6 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> changePassword(String oldPassword, String newPassword) async {
-    final prefs = await SharedPreferences.getInstance();
     final token = await getToken();
     final response = await http.post(
       Uri.parse('$baseUrl/profile.php'),

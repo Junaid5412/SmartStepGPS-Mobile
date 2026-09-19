@@ -2,7 +2,6 @@ import 'dart:math' as math;
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../services/api_service.dart';
 import 'monitor_dashboard.dart';
 import 'parent_dashboard.dart';
@@ -50,6 +49,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('api_token');
     final role = prefs.getString('role');
+    if (!mounted) return;
     if (token != null && token.isNotEmpty && role != null) {
       if (role == 'monitor' || role == 'driver') {
         Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const MonitorDashboard()));

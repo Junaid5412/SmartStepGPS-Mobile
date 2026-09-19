@@ -19,6 +19,10 @@ dependencies:
   flutter_map: ^8.3.2
   latlong2: ^0.10.1
   url_launcher: ^6.3.2
+  # lib/screens/privacy_screen.dart imports this. It only worked because some other package happened
+  # to pull it in; the moment that package dropped it, the build would have failed with "Target of
+  # URI doesn't exist" and nothing here would explain why. Declare what you import.
+  intl: ^0.20.2
 
 dev_dependencies:
   flutter_test:

@@ -75,7 +75,9 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
     final role = prefs.getString('role');
 
     Widget destination;
-    if (token != null && token.isNotEmpty && role != null) {
+    // No "token != null" here: ApiService.getToken() returns a non-nullable String, so that test
+    // was always true and only made this read as if it handled a case it never could.
+    if (token.isNotEmpty && role != null) {
       if (role == 'monitor' || role == 'driver') {
         destination = const MonitorDashboard();
       } else {
@@ -85,6 +87,9 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
       destination = const LoginScreen();
     }
 
+    // The mounted check above happens before the two awaits, so it says nothing about now. Reading
+    // the token can be slow on a cold start, and the user can background the app in that window.
+    if (!mounted) return;
     Navigator.of(context).pushReplacement(
       PageRouteBuilder(
         transitionDuration: const Duration(milliseconds: 600),

@@ -64,6 +64,9 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
     setState(() => _isLoading = true);
     try {
       final response = await ApiService.getRoster();
+      // Guard once, here, rather than before each setState and each ScaffoldMessenger below: this
+      // is the only await, so after it either the screen is still alive for all of them or none.
+      if (!mounted) return;
       if (response['success'] == true) {
         setState(() {
           _students = response['data'] ?? [];
@@ -93,6 +96,7 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
         }
       }
     } catch (e) {
+      if (!mounted) return;
       setState(() => _isLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text('Network error: $e'),
@@ -233,68 +237,6 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
         backgroundColor: Colors.redAccent,
       ));
     }
-  }
-
-  void _showAbsentOrLeavePicker(int studentId, String studentName) {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) => Container(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Mark Attendance for $studentName', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 6),
-            Text('Select the status reason for today:', style: TextStyle(color: Colors.grey[600], fontSize: 13)),
-            const SizedBox(height: 18),
-            ListTile(
-              leading: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(color: Colors.red.withOpacity(0.1), shape: BoxShape.circle),
-                child: const Icon(Icons.close, color: Colors.redAccent),
-              ),
-              title: const Text('Mark Absent', style: TextStyle(fontWeight: FontWeight.bold)),
-              subtitle: const Text('Student did not arrive at the pickup stop'),
-              onTap: () {
-                Navigator.pop(ctx);
-                _confirmAndMarkAttendance(studentId, studentName, 'absent');
-              },
-            ),
-            const Divider(),
-            ListTile(
-              leading: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(color: Colors.orange.withOpacity(0.1), shape: BoxShape.circle),
-                child: const Icon(Icons.event_busy, color: Colors.orange),
-              ),
-              title: const Text('On Leave', style: TextStyle(fontWeight: FontWeight.bold)),
-              subtitle: const Text('Parent notified / officially on approved leave'),
-              onTap: () {
-                Navigator.pop(ctx);
-                _confirmAndMarkAttendance(studentId, studentName, 'leave');
-              },
-            ),
-            const Divider(),
-            ListTile(
-              leading: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(color: _byParentColor.withOpacity(0.1), shape: BoxShape.circle),
-                child: const Icon(Icons.family_restroom, color: _byParentColor),
-              ),
-              title: const Text('By Parents (BP)', style: TextStyle(fontWeight: FontWeight.bold)),
-              subtitle: const Text('Parent is taking the child themselves — counts as PRESENT'),
-              onTap: () {
-                Navigator.pop(ctx);
-                _confirmAndMarkAttendance(studentId, studentName, 'by_parent');
-              },
-            ),
-            const SizedBox(height: 10),
-          ],
-        ),
-      ),
-    );
   }
 
   /// Raises a real deletion request. This previously showed a green "request submitted" message

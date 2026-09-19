@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
 import '../widgets/custom_loading.dart';
@@ -154,12 +153,14 @@ class _ParentDashboardState extends State<ParentDashboard> {
         final prefs = await SharedPreferences.getInstance();
         await prefs.clear();
         await ApiService.clearToken();
+        if (!mounted) return;
         Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const LoginScreen()));
         return;
       }
     } catch (e) {
       debugPrint('Error: $e');
     }
+    if (!mounted) return;
     setState(() => _isLoading = false);
   }
 
@@ -167,37 +168,10 @@ class _ParentDashboardState extends State<ParentDashboard> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.clear();
     await ApiService.clearToken();
+    // Clearing storage is a few awaits; if the screen went away in that window, navigating from a
+    // dead context throws. The session is already cleared either way, which is what matters.
+    if (!mounted) return;
     Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const LoginScreen()));
-  }
-
-  void _showStudentPicker(String title, Function(Map<String, dynamic>) onSelect) {
-    if (_students.length == 1) { onSelect(Map<String, dynamic>.from(_students[0])); return; }
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => Container(
-        decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const SizedBox(height: 8),
-          Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2))),
-          Padding(padding: const EdgeInsets.all(16), child: Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold))),
-          ..._students.map((s) => ListTile(
-            leading: CircleAvatar(
-              backgroundColor: const Color(0xFFE3F2FD),
-              child: Text(
-                (s['name'] ?? '?')[0].toUpperCase(),
-                style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1565C0)),
-              ),
-            ),
-            title: Text(s['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.w600)),
-            subtitle: Text('Grade: ${s['grade'] ?? 'N/A'}'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () { Navigator.pop(ctx); onSelect(Map<String, dynamic>.from(s)); },
-          )).toList(),
-          const SizedBox(height: 24),
-        ]),
-      ),
-    );
   }
 
   Color _parseHexColor(dynamic hexStr, Color fallback) {
