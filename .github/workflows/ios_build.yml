@@ -79,8 +79,20 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" build.keychain
           rm -f cert.p12
 
+          # Install the profile under its own UUID, which is the filename Xcode looks for.
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          echo "$PROFILE_B64" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
+          echo "$PROFILE_B64" | base64 --decode > profile.mobileprovision
+          PLIST_XML="$(security cms -D -i profile.mobileprovision)"
+          echo "$PLIST_XML" > profile.plist
+          PROFILE_UUID="$(/usr/libexec/PlistBuddy -c 'Print :UUID' profile.plist)"
+          PROFILE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :Name' profile.plist)"
+          cp profile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/"$PROFILE_UUID".mobileprovision
+          rm -f profile.mobileprovision profile.plist
+
+          # The profile's name is what xcodebuild matches on, and it is not something worth making
+          # into another secret when the profile already carries it.
+          echo "PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
+          echo "Installed provisioning profile: $PROFILE_NAME"
 
       - name: Build signed IPA
         if: steps.signing.outputs.available == 'true'
@@ -88,6 +100,23 @@ jobs:
           TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
         run: |
           set -euo pipefail
+
+          # MANUAL signing, not automatic. Automatic signing asks Apple to issue or refresh the
+          # certificate on the fly, which needs an App Store Connect API key and an Apple ID
+          # session - neither exists on a fresh runner, so it fails with an unhelpful
+          # "No signing certificate found". The certificate and profile are already installed
+          # above, so tell Xcode to use exactly those and nothing else.
+          cat >> ios/Flutter/Release.xcconfig <<XCCONFIG
+
+          CODE_SIGN_STYLE = Manual
+          DEVELOPMENT_TEAM = ${TEAM_ID}
+          PROVISIONING_PROFILE_SPECIFIER = ${PROFILE_NAME}
+          CODE_SIGN_IDENTITY = Apple Distribution
+          XCCONFIG
+
+          BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' ios/Runner/Info.plist 2>/dev/null || echo 'com.smartstep.gps')"
+          if [ "$BUNDLE_ID" = "\$(PRODUCT_BUNDLE_IDENTIFIER)" ]; then BUNDLE_ID="com.smartstep.gps"; fi
+
           cat > ios/ExportOptions.plist <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -95,12 +124,34 @@ jobs:
           <dict>
             <key>method</key><string>app-store-connect</string>
             <key>teamID</key><string>${TEAM_ID}</string>
-            <key>signingStyle</key><string>automatic</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>stripSwiftSymbols</key><true/>
             <key>uploadSymbols</key><true/>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>${BUNDLE_ID}</key><string>${PROFILE_NAME}</string>
+            </dict>
           </dict>
           </plist>
           PLIST
+
           flutter build ipa --release --export-options-plist=ios/ExportOptions.plist
+
+      - name: Confirm the IPA is actually signed
+        if: steps.signing.outputs.available == 'true'
+        run: |
+          set -euo pipefail
+          IPA="$(ls build/ios/ipa/*.ipa | head -n 1)"
+          echo "checking $IPA"
+          mkdir -p /tmp/ipacheck && unzip -q -o "$IPA" -d /tmp/ipacheck
+          APP="$(ls -d /tmp/ipacheck/Payload/*.app | head -n 1)"
+          # A signature that does not verify means App Store Connect will reject the upload, and
+          # finding that out here costs seconds instead of a round trip through Apple.
+          codesign -dv --verbose=4 "$APP" 2>&1 | sed -n '1,12p'
+          codesign --verify --deep --strict "$APP" && echo "SIGNATURE VALID"
+          test -f "$APP/PrivacyInfo.xcprivacy" \
+            && echo "PrivacyInfo.xcprivacy is in the bundle" \
+            || { echo "::error::PrivacyInfo.xcprivacy is MISSING from the bundle"; exit 1; }
 
       - name: Upload signed IPA
         if: steps.signing.outputs.available == 'true'

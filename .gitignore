@@ -51,3 +51,13 @@ android/key.properties
 *.jks
 *.keystore
 android/local.properties
+
+# --- iOS signing material. The private key here IS the distribution identity: anyone holding it
+# --- can sign builds as this organisation. It must never reach the repository, and never a build
+# --- log either - an earlier workflow printed one into a public log and it had to be revoked.
+tool/ios_signing/
+*.p12
+*.mobileprovision
+*.cer
+*.certSigningRequest
+ios/ExportOptions.plist
