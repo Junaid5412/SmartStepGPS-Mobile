@@ -97,7 +97,8 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         }
 
         setState(() {
-          _records = rawRecords;
+          // The flat record list was only ever written, never read - everything on this screen is
+          // driven by _recordsByDate. The field is gone, and so are its three assignments.
           _recordsByDate.clear();
           _recordsByDate.addAll(grouped);
           _isLoading = false;
@@ -105,7 +106,6 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       } else {
         setState(() {
           _errorMessage = res['error']?.toString() ?? 'Failed to load attendance history.';
-          _records = [];
           _recordsByDate.clear();
           _isLoading = false;
         });
@@ -113,7 +113,6 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     } catch (e) {
       setState(() {
         _errorMessage = 'An error occurred while loading attendance records.';
-        _records = [];
         _recordsByDate.clear();
         _isLoading = false;
       });

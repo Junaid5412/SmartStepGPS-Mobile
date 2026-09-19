@@ -30,6 +30,11 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
+      # Catch Dart errors here rather than after Gradle has spent six minutes getting to them.
+      # Infos and warnings stay non-fatal; only real errors stop the build.
+      - name: Analyze (errors fail the build, warnings do not)
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
       - name: Decode Keystore
         run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > android/app/smartgps-release.jks
 

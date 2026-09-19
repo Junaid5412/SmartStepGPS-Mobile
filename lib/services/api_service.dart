@@ -238,6 +238,9 @@ class ApiService {
     required String motherEmail,
     required String address,
   }) async {
+    // Unlike the other calls in this file, this one really does need prefs: the server can return a
+    // corrected display name and it is cached below.
+    final prefs = await SharedPreferences.getInstance();
     final token = await getToken();
     final response = await http.post(
       Uri.parse('$baseUrl/profile.php'),

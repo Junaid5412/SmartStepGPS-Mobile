@@ -44,10 +44,14 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
-      - name: Analyze
-        # A build that compiles but fails analysis still gets rejected by reviewers for the
-        # behaviour the warnings describe. Not fatal here, so a warning cannot block a release.
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings || true
+      - name: Analyze (errors fail the build, warnings do not)
+        # NO "|| true". Swallowing the exit code cost a two-minute build and a badly misleading
+        # error: four Dart errors (an undefined field and an undefined variable) let this step pass,
+        # the Xcode build then failed, and Flutter's diagnostic guessed at the cause and printed
+        # "requires a selected Development Team" - sending us after a signing problem that did not
+        # exist. The flags keep infos and warnings non-fatal, so only genuine errors stop the build,
+        # and they stop it in eight seconds with the file and line printed.
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
       # ---- signed path ------------------------------------------------------------------------
       - name: Are signing secrets present?
