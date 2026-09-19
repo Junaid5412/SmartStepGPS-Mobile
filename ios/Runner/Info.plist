@@ -67,7 +67,20 @@
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>This app requires access to your location to show your position relative to the school bus and stop.</string>
+	<string>Your location is used only while the app is open, to show where you are in relation to the school bus and the stop. It stays on your device and is never sent to our servers.</string>
+	<!--
+	  ITMS-90683. Apple scans the BINARY for references to protected APIs, not for what the app
+	  actually calls. The geolocator plugin's iOS code contains a reference to
+	  requestAlwaysAuthorization, so Apple demands this purpose string even though this app never
+	  asks for always-on location.
+
+	  Adding it does not grant background location. That requires UIBackgroundModes with the
+	  "location" value, which this app deliberately does not declare - there is no entitlements file
+	  either. Every location read happens through a single getCurrentPosition() call while a screen
+	  is open. The wording below says exactly that, so it stays truthful if iOS ever shows it.
+	-->
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Your location is used only while the app is open, to show where you are in relation to the school bus and the stop. This app does not track your location in the background.</string>
 	<!--
 	  Export compliance. Every upload otherwise stops in App Store Connect on the question "Does
 	  your app use encryption?", and the build cannot go to TestFlight or review until it is
