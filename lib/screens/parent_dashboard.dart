@@ -81,9 +81,15 @@ class _ParentDashboardState extends State<ParentDashboard> {
         'icon': 'gps_fixed',
         'gradient': ['#1565C0', '#1E88E5'],
       },
+      // Describes only what the app actually does. This card used to advertise RFID boarding
+      // verification and instant arrival alerts. Neither exists: boarding is recorded by the bus
+      // monitor by hand, there is no RFID hardware, and push is not implemented at all (no
+      // firebase_messaging, no google-services.json). Both Google Play and Apple reject apps that
+      // advertise features they do not have, and a parent trusting an arrival alert that never
+      // comes is worse off than one who knows to check the screen.
       {
-        'title': 'Safe Transit & Alerts',
-        'subtitle': 'RFID boarding verification and instantaneous arrival notifications',
+        'title': 'Boarding Record',
+        'subtitle': 'Every pick-up and drop-off, recorded by the bus monitor and visible to you',
         'badge': 'STUDENT SAFETY',
         'icon': 'security',
         'gradient': ['#00897B', '#26A69A'],

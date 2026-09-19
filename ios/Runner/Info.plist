@@ -68,5 +68,14 @@
 	</array>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>This app requires access to your location to show your position relative to the school bus and stop.</string>
+	<!--
+	  Export compliance. Every upload otherwise stops in App Store Connect on the question "Does
+	  your app use encryption?", and the build cannot go to TestFlight or review until it is
+	  answered by hand each time. This app only uses HTTPS to talk to its own server, which is the
+	  exempt category, so the answer is settled here once.
+	  If you ever add your own cryptography beyond standard HTTPS, this must be revisited.
+	-->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 </dict>
 </plist>

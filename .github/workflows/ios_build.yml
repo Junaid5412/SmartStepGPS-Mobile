@@ -1,10 +1,29 @@
 name: Build iOS IPA
 
+# Two modes.
+#
+#   Without signing secrets  -> an UNSIGNED .ipa. Useful to prove the code compiles on iOS, and
+#                               nothing else. App Store Connect refuses unsigned uploads, so this
+#                               artifact can never be submitted. This is what the workflow did
+#                               before, and why the IPA it produced could not be used.
+#
+#   With signing secrets     -> a signed .ipa built through xcodebuild's own export step, which is
+#                               the only output App Store Connect accepts.
+#
+# Required secrets for the signed path (add under Settings -> Secrets and variables -> Actions):
+#   IOS_DIST_CERT_P12_BASE64   base64 of the .p12 distribution certificate exported from Keychain
+#   IOS_DIST_CERT_PASSWORD     the password set when exporting that .p12
+#   IOS_PROVISIONING_PROFILE_BASE64
+#                              base64 of the App Store provisioning profile (.mobileprovision)
+#   IOS_TEAM_ID                the 10-character Apple Team ID
+#
+#   Generate the base64 on your own machine, never in a workflow:
+#       base64 -i cert.p12 | pbcopy            (macOS)
+#       certutil -encode cert.p12 out.txt      (Windows)
+
 on:
   push:
-    branches:
-      - main
-      - master
+    branches: [main, master]
   workflow_dispatch:
 
 jobs:
@@ -25,17 +44,93 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
-      - name: Build iOS IPA (No Code Signing)
-        run: flutter build ios --release --no-codesign
+      - name: Analyze
+        # A build that compiles but fails analysis still gets rejected by reviewers for the
+        # behaviour the warnings describe. Not fatal here, so a warning cannot block a release.
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings || true
 
-      - name: Package Payload to IPA
+      # ---- signed path ------------------------------------------------------------------------
+      - name: Are signing secrets present?
+        id: signing
+        env:
+          CERT: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
         run: |
-          mkdir -p Payload
-          cp -r build/ios/iphoneos/Runner.app Payload/
-          zip -r -y Smart_Step_GPS.ipa Payload
+          if [ -n "$CERT" ]; then echo "available=true" >> "$GITHUB_OUTPUT";
+          else echo "available=false" >> "$GITHUB_OUTPUT"; fi
 
-      - name: Upload IPA Artifact
+      - name: Install certificate and provisioning profile
+        if: steps.signing.outputs.available == 'true'
+        env:
+          CERT_B64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          PROFILE_B64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          set -euo pipefail
+          # A throwaway keychain with a random password, unlocked only for this job. Nothing is
+          # written to the default login keychain and the runner is destroyed afterwards.
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+
+          echo "$CERT_B64" | base64 --decode > cert.p12
+          security import cert.p12 -k build.keychain -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          rm -f cert.p12
+
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          echo "$PROFILE_B64" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
+
+      - name: Build signed IPA
+        if: steps.signing.outputs.available == 'true'
+        env:
+          TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          cat > ios/ExportOptions.plist <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>teamID</key><string>${TEAM_ID}</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>uploadSymbols</key><true/>
+          </dict>
+          </plist>
+          PLIST
+          flutter build ipa --release --export-options-plist=ios/ExportOptions.plist
+
+      - name: Upload signed IPA
+        if: steps.signing.outputs.available == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: Smart_Step_GPS_iOS_IPA
-          path: Smart_Step_GPS.ipa
+          name: Smart_Step_GPS_iOS_SIGNED
+          path: build/ios/ipa/*.ipa
+
+      # ---- unsigned path ----------------------------------------------------------------------
+      - name: Build unsigned app (compile check only)
+        if: steps.signing.outputs.available != 'true'
+        run: flutter build ios --release --no-codesign
+
+      - name: Package unsigned IPA
+        if: steps.signing.outputs.available != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p Payload
+          cp -r build/ios/iphoneos/Runner.app Payload/
+          zip -r -y Smart_Step_GPS_UNSIGNED.ipa Payload
+
+      - name: Upload unsigned IPA
+        if: steps.signing.outputs.available != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Smart_Step_GPS_iOS_UNSIGNED
+          path: Smart_Step_GPS_UNSIGNED.ipa
+
+      - name: Explain the unsigned result
+        if: steps.signing.outputs.available != 'true'
+        run: |
+          echo "::warning::This IPA is UNSIGNED and cannot be uploaded to App Store Connect."
+          echo "::warning::Add the IOS_DIST_* secrets listed at the top of this workflow to get a submittable build."

@@ -41,3 +41,7 @@ flutter_launcher_icons:
   image_path: "tool/icon/icon_legacy.png"
   adaptive_icon_background: "#F0F4F8"
   adaptive_icon_foreground: "tool/icon/icon_foreground.png"
+  # App Store Connect refuses any build whose icons carry an alpha channel, and it refuses it at
+  # upload, before review. Every iOS icon in this project had one. This flag makes the generator
+  # flatten them, so re-running it can never put the problem back.
+  remove_alpha_ios: true

@@ -45,7 +45,7 @@ class _TermsScreenState extends State<TermsScreen> {
 By accessing or using the Smart Step GPS mobile application and its associated services, you agree to be bound by these Terms and Conditions. If you do not agree, please do not use the application.
 
 2. Transportation & Real-Time Tracking
-Smart Step GPS provides real-time school bus tracking, attendance logging, geofenced notifications, and route monitoring for parents, school staff, and authorized monitors. While we strive for maximum accuracy, GPS coordinates and estimated arrival times (ETAs) may experience occasional fluctuations due to cellular network conditions, weather, or hardware telemetry latency.
+Smart Step GPS provides real-time school bus tracking, attendance logging, and route monitoring for parents, school staff, and authorized monitors. While we strive for maximum accuracy, GPS coordinates and estimated arrival times (ETAs) may experience occasional fluctuations due to cellular network conditions, weather, or hardware telemetry latency.
 
 3. Parent & Guardian Responsibilities
 Parents and guardians are responsible for ensuring that their contact information, authorized pickup contacts, and student profiles are accurate and up-to-date. Parents must ensure children are present at designated bus stops at the specified morning pickup time.

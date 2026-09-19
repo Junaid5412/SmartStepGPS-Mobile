@@ -91,6 +91,12 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
         _passwordController.text.trim(),
         '',
       );
+      // The sign-in request is slow enough that the user can leave this screen, or Android can
+      // dispose it, before the reply lands. Touching setState or context after that throws
+      // "setState() called after dispose()" / "Looking up a deactivated widget's ancestor" - a
+      // crash on a bad connection rather than on a bad password. Every use of either after an
+      // await is guarded from here on.
+      if (!mounted) return;
       setState(() => _isLoading = false);
       if (result['success'] == true) {
         final prefs = await SharedPreferences.getInstance();
@@ -99,6 +105,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
         if (result['user'] != null && result['user']['name'] != null) {
           await prefs.setString('user_name', result['user']['name']);
         }
+        if (!mounted) return;
         if (result['role'] == 'monitor' || result['role'] == 'driver') {
           Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const MonitorDashboard()));
         } else {
@@ -110,6 +117,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
         );
       }
     } catch (e) {
+      if (!mounted) return;
       setState(() => _isLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Network Error: Could not connect to server.'), backgroundColor: Colors.redAccent),
