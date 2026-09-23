@@ -92,31 +92,46 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
-        // Show Prominent Disclosure (Google Play Policy)
-        bool shouldRequest = await showDialog(
-              context: context,
-              barrierDismissible: false,
-              builder: (ctx) => AlertDialog(
-                title: const Text('Location Access Required'),
-                content: const Text(
-                  'Smart Step GPS needs to access your location to display your position on the map relative to the school bus. '
-                  'This helps you see how far you are from the bus stop.',
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(ctx, false),
-                    child: const Text('Deny', style: TextStyle(color: Colors.grey)),
-                  ),
-                  TextButton(
-                    onPressed: () => Navigator.pop(ctx, true),
-                    child: const Text('Allow'),
-                  ),
-                ],
+        // Pre-permission notice. REJECTED by Apple on 23 Sep 2026 under guideline 5.1.1(iv) in its
+        // previous form, which offered "Deny" and "Allow" buttons. Two things were wrong with it:
+        //
+        //   1. A button labelled "Allow" makes the notice look like the permission decision itself,
+        //      so a user can believe they have already answered before iOS even asks.
+        //   2. "Deny" returned early and never reached Geolocator.requestPermission(), letting the
+        //      user postpone the system prompt indefinitely. Apple requires that the real prompt
+        //      always follows the notice - the decision belongs to the OS dialog, not to ours.
+        //
+        // So this is now purely informational: one button, worded "Continue", and no path that
+        // skips ahead. The user's actual choice happens in the iOS prompt immediately after, where
+        // declining is always available and is respected.
+        //
+        // PopScope(canPop: false) with barrierDismissible: false closes the last gap - the Android
+        // back button previously dismissed this dialog, which was the same "delay the request"
+        // behaviour Apple objected to.
+        await showDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) => PopScope(
+            canPop: false,
+            child: AlertDialog(
+              title: const Text('About your location'),
+              content: const Text(
+                'Smart Step GPS shows where you are in relation to the school bus and the stop, so '
+                'you can see how far away the bus is.\n\n'
+                'Your location is used only while this screen is open. It stays on your device and '
+                'is never sent to our servers.',
               ),
-            ) ??
-            false;
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Continue'),
+                ),
+              ],
+            ),
+          ),
+        );
 
-        if (!shouldRequest) return;
+        if (!mounted) return;
 
         permission = await Geolocator.requestPermission();
         if (permission == LocationPermission.denied) return;
