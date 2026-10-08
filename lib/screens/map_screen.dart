@@ -634,11 +634,27 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                       ],
                     ),
 
-                    // Required by the OpenStreetMap licence (ODbL). Top-left, because the map
-                    // controls sit top-right and the info card covers the bottom of the map.
-                    const SimpleAttributionWidget(
-                      source: Text(OfflineMap.attribution),
+                    // Required by the OpenStreetMap licence (ODbL): visible, but small and quiet.
+                    // Top-left, because the map controls sit top-right and the info card covers
+                    // the bottom of the map.
+                    Align(
                       alignment: Alignment.topLeft,
+                      child: Padding(
+                        padding: const EdgeInsets.all(6),
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.65),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: const Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                            child: Text(
+                              '© ${OfflineMap.attribution}',
+                              style: TextStyle(fontSize: 9, color: Color(0xFF64748B), fontWeight: FontWeight.w500),
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
                   ],
                 ),

@@ -22,7 +22,7 @@ class OfflineMap {
   OfflineMap._(this.theme, this.provider);
 
   static const String sourceName = 'protomaps';
-  /// SimpleAttributionWidget puts the '©' in front itself.
+  /// Shown on the map as '© ' + this.
   static const String attribution = 'OpenStreetMap contributors';
 
   static const String _tilesAsset = 'assets/map/qatar.pmtiles';
