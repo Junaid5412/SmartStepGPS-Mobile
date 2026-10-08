@@ -592,16 +592,7 @@ class _ParentDashboardState extends State<ParentDashboard> {
     }
     if (_modules['bus_tracking'] == true) {
       modules.add(_buildModuleCard('Bus Tracking', Icons.gps_fixed_rounded, const [Color(0xFF4CAF50), Color(0xFF2E7D32)], () {
-        if (_students.isNotEmpty) {
-          final student = _students.first;
-          if (student['device_id'] != null) {
-            Navigator.push(context, MaterialPageRoute(builder: (_) => MapScreen(student: student)));
-          } else {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No GPS device linked.')));
-          }
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No children found.')));
-        }
+        _openBusTracking();
       }));
     }
     if (_modules['announcements'] == true) {
@@ -623,6 +614,63 @@ class _ParentDashboardState extends State<ParentDashboard> {
       crossAxisSpacing: 14,
       childAspectRatio: 1.5,
       children: modules,
+    );
+  }
+
+  /// Opens the live map. This used to always open the FIRST child's bus, so a parent whose children
+  /// ride different buses could never track the others. Children sharing one bus still go straight
+  /// to the map; only when they are on different buses is the parent asked which one.
+  void _openBusTracking() {
+    if (_students.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No children found.')));
+      return;
+    }
+    final tracked = _students.where((s) => s is Map && s['device_id'] != null).toList();
+    if (tracked.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No GPS device linked.')));
+      return;
+    }
+    final buses = tracked.map((s) => s['device_id'].toString()).toSet();
+    if (buses.length == 1) {
+      Navigator.push(context, MaterialPageRoute(builder: (_) => MapScreen(student: tracked.first)));
+      return;
+    }
+
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Track which bus?', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 4),
+              Text('Your children ride different buses.', style: TextStyle(fontSize: 13, color: Colors.grey[600])),
+              const SizedBox(height: 12),
+              ...tracked.map((s) => ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                    leading: const CircleAvatar(
+                      backgroundColor: Color(0xFFE8F5E9),
+                      child: Icon(Icons.directions_bus_rounded, color: Color(0xFF2E7D32)),
+                    ),
+                    title: Text(s['name']?.toString() ?? 'Student', style: const TextStyle(fontWeight: FontWeight.w600)),
+                    // api/mobile/parent_students.php sends the plate as bus_name and the class as grade.
+                    subtitle: Text([s['bus_name'], s['grade']]
+                        .where((v) => v != null && v.toString().isNotEmpty)
+                        .join(' · ')),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: () {
+                      Navigator.pop(sheetContext);
+                      Navigator.push(context, MaterialPageRoute(builder: (_) => MapScreen(student: s)));
+                    },
+                  )),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -659,7 +707,11 @@ class _ParentDashboardState extends State<ParentDashboard> {
   Widget _buildStudentCard(dynamic student) {
     return GestureDetector(
       onTap: () {
-        Navigator.push(context, MaterialPageRoute(builder: (_) => AttendanceScreen(students: _students)));
+        // Open on the child that was tapped, not on whoever happens to be first in the list.
+        final index = _students.indexOf(student);
+        Navigator.push(context, MaterialPageRoute(
+          builder: (_) => AttendanceScreen(students: _students, initialIndex: index < 0 ? 0 : index),
+        ));
       },
       child: Container(
         margin: const EdgeInsets.only(bottom: 12),

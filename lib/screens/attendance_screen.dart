@@ -6,7 +6,11 @@ import '../widgets/custom_loading.dart';
 class AttendanceScreen extends StatefulWidget {
   final List<dynamic> students;
 
-  const AttendanceScreen({Key? key, required this.students}) : super(key: key);
+  /// Which child to open on. A tapped student card passes its own position so the screen shows
+  /// that child; the Attendance tile has no particular child in mind and leaves it at the first.
+  final int initialIndex;
+
+  const AttendanceScreen({Key? key, required this.students, this.initialIndex = 0}) : super(key: key);
 
   @override
   State<AttendanceScreen> createState() => _AttendanceScreenState();
@@ -40,6 +44,10 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     final now = DateTime.now();
     _focusedMonth = DateTime(now.year, now.month, 1);
     _selectedDate = DateTime(now.year, now.month, now.day);
+
+    if (widget.initialIndex > 0 && widget.initialIndex < widget.students.length) {
+      _selectedStudentIndex = widget.initialIndex;
+    }
 
     if (widget.students.isNotEmpty) {
       _fetchAttendance();
