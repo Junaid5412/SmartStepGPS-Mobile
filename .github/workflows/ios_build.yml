@@ -190,7 +190,11 @@ jobs:
           fi
           # altool looks for the key in ~/private_keys/AuthKey_<KEY_ID>.p8.
           mkdir -p ~/private_keys
-          printf '%s\n' "$API_KEY" > ~/private_keys/AuthKey_${KEY_ID}.p8
+          # Accept the raw .p8 text, or the "key" value copied from a JSON key file, where line
+          # breaks are written as \n and the value may still have its quotes and trailing comma.
+          printf '%s\n' "$API_KEY" | perl -pe 's/\x5Cn/\n/g; s/^[ \t]*"//; s/"[ \t]*,?[ \t]*$//' > ~/private_keys/AuthKey_${KEY_ID}.p8
+          grep -q "BEGIN PRIVATE KEY" ~/private_keys/AuthKey_${KEY_ID}.p8 \
+            || { echo "::error::APP_STORE_CONNECT_API_KEY does not look like a .p8 private key"; exit 1; }
           IPA="$(ls build/ios/ipa/*.ipa | head -n 1)"
           xcrun altool --upload-app --type ios --file "$IPA" --apiKey "$KEY_ID" --apiIssuer "$ISSUER_ID"
           rm -f ~/private_keys/AuthKey_${KEY_ID}.p8
