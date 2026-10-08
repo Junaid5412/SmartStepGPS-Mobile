@@ -25,8 +25,9 @@ name: Build iOS IPA
 #   APP_STORE_CONNECT_KEY_ID      Key ID of an App Store Connect API key (Users and Access -> Integrations)
 #   APP_STORE_CONNECT_ISSUER_ID   Issuer ID shown on the same page
 #   APP_STORE_CONNECT_API_KEY     full text of the downloaded AuthKey_XXXXXXXXXX.p8 file
-#   Then: Actions -> Build iOS IPA -> Run workflow -> tick "Upload to App Store Connect".
-#   Pushes never upload: each upload needs a new build number, so it is a deliberate step.
+#   With these set, every push uploads the signed build to App Store Connect (TestFlight).
+#   Apple accepts each build number once: a push that did not bump the version in pubspec.yaml
+#   gets a warning, not a failed build. Releasing to users is still done by hand in App Store Connect.
 
 on:
   push:
@@ -36,7 +37,7 @@ on:
       upload:
         description: "Upload to App Store Connect (TestFlight)"
         type: boolean
-        default: false
+        default: true
 
 jobs:
   build_ios:
@@ -177,7 +178,7 @@ jobs:
           path: build/ios/ipa/*.ipa
 
       - name: Upload to App Store Connect
-        if: steps.signing.outputs.available == 'true' && github.event_name == 'workflow_dispatch' && inputs.upload
+        if: steps.signing.outputs.available == 'true' && (github.event_name == 'push' || inputs.upload)
         env:
           KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
@@ -185,8 +186,8 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "$KEY_ID" ] || [ -z "$ISSUER_ID" ] || [ -z "$API_KEY" ]; then
-            echo "::error::Add APP_STORE_CONNECT_KEY_ID, APP_STORE_CONNECT_ISSUER_ID and APP_STORE_CONNECT_API_KEY secrets first."
-            exit 1
+            echo "::warning::Not uploaded: add APP_STORE_CONNECT_KEY_ID, APP_STORE_CONNECT_ISSUER_ID and APP_STORE_CONNECT_API_KEY secrets."
+            exit 0
           fi
           # altool looks for the key in ~/private_keys/AuthKey_<KEY_ID>.p8.
           mkdir -p ~/private_keys
@@ -196,9 +197,20 @@ jobs:
           grep -q "BEGIN PRIVATE KEY" ~/private_keys/AuthKey_${KEY_ID}.p8 \
             || { echo "::error::APP_STORE_CONNECT_API_KEY does not look like a .p8 private key"; exit 1; }
           IPA="$(ls build/ios/ipa/*.ipa | head -n 1)"
-          xcrun altool --upload-app --type ios --file "$IPA" --apiKey "$KEY_ID" --apiIssuer "$ISSUER_ID"
+          set +e
+          OUT="$(xcrun altool --upload-app --type ios --file "$IPA" --apiKey "$KEY_ID" --apiIssuer "$ISSUER_ID" 2>&1)"
+          CODE=$?
+          set -e
           rm -f ~/private_keys/AuthKey_${KEY_ID}.p8
-          echo "Uploaded. The build appears in App Store Connect -> TestFlight after Apple processes it (10-30 min)."
+          echo "$OUT"
+          if [ $CODE -eq 0 ]; then
+            echo "Uploaded. The build appears in App Store Connect -> TestFlight after Apple processes it (10-30 min)."
+          elif echo "$OUT" | grep -qiE "previously uploaded|already been (used|uploaded)|DUPLICATE|must be higher|must contain a higher"; then
+            echo "::warning::Not uploaded: this build number is already in App Store Connect. Bump version in pubspec.yaml (e.g. 1.0.6+9) for a new upload."
+          else
+            echo "::error::Upload to App Store Connect failed - see the output above."
+            exit 1
+          fi
 
       # ---- unsigned path ----------------------------------------------------------------------
       - name: Build unsigned app (compile check only)
