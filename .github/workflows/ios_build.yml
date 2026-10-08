@@ -20,11 +20,23 @@ name: Build iOS IPA
 #   Generate the base64 on your own machine, never in a workflow:
 #       base64 -i cert.p12 | pbcopy            (macOS)
 #       certutil -encode cert.p12 out.txt      (Windows)
+#
+# Optional, to send the build straight to App Store Connect / TestFlight (no Mac needed):
+#   APP_STORE_CONNECT_KEY_ID      Key ID of an App Store Connect API key (Users and Access -> Integrations)
+#   APP_STORE_CONNECT_ISSUER_ID   Issuer ID shown on the same page
+#   APP_STORE_CONNECT_API_KEY     full text of the downloaded AuthKey_XXXXXXXXXX.p8 file
+#   Then: Actions -> Build iOS IPA -> Run workflow -> tick "Upload to App Store Connect".
+#   Pushes never upload: each upload needs a new build number, so it is a deliberate step.
 
 on:
   push:
     branches: [main, master]
   workflow_dispatch:
+    inputs:
+      upload:
+        description: "Upload to App Store Connect (TestFlight)"
+        type: boolean
+        default: false
 
 jobs:
   build_ios:
@@ -163,6 +175,26 @@ jobs:
         with:
           name: Smart_Step_GPS_iOS_SIGNED
           path: build/ios/ipa/*.ipa
+
+      - name: Upload to App Store Connect
+        if: steps.signing.outputs.available == 'true' && github.event_name == 'workflow_dispatch' && inputs.upload
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$KEY_ID" ] || [ -z "$ISSUER_ID" ] || [ -z "$API_KEY" ]; then
+            echo "::error::Add APP_STORE_CONNECT_KEY_ID, APP_STORE_CONNECT_ISSUER_ID and APP_STORE_CONNECT_API_KEY secrets first."
+            exit 1
+          fi
+          # altool looks for the key in ~/private_keys/AuthKey_<KEY_ID>.p8.
+          mkdir -p ~/private_keys
+          printf '%s\n' "$API_KEY" > ~/private_keys/AuthKey_${KEY_ID}.p8
+          IPA="$(ls build/ios/ipa/*.ipa | head -n 1)"
+          xcrun altool --upload-app --type ios --file "$IPA" --apiKey "$KEY_ID" --apiIssuer "$ISSUER_ID"
+          rm -f ~/private_keys/AuthKey_${KEY_ID}.p8
+          echo "Uploaded. The build appears in App Store Connect -> TestFlight after Apple processes it (10-30 min)."
 
       # ---- unsigned path ----------------------------------------------------------------------
       - name: Build unsigned app (compile check only)
