@@ -24,8 +24,20 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   final MapController _mapController = MapController();
   Timer? _timer;
 
-  /// The bundled English map of Qatar; null for the moment it takes to open on first use.
-  OfflineMap? _offlineMap;
+  /// The bundled English map of Qatar as a layer, built ONCE when the map has opened (null for the
+  /// moment that takes on first use). Handing Flutter the same widget instance on every rebuild lets it
+  /// skip the layer entirely; a freshly constructed VectorTileLayer each time made the map redo work
+  /// on every rebuild, which is what made panning and zooming stutter.
+  Widget? _tileLayer;
+
+  /// The bus marker's animated position. The glide runs at 60 fps; it used to call setState on every
+  /// frame and so rebuilt the whole screen - map included - sixty times a second. Now only the bus
+  /// marker layer listens to this.
+  final ValueNotifier<LatLng?> _busPos = ValueNotifier<LatLng?>(null);
+
+  /// Short status line shown just under the header (e.g. "Locating live bus position...").
+  String? _banner;
+  Timer? _bannerTimer;
 
   bool _isLoading = true;
   bool _isActiveWindow = true;
@@ -65,7 +77,17 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   void initState() {
     super.initState();
     OfflineMap.load().then((m) {
-      if (mounted) setState(() => _offlineMap = m);
+      if (!mounted) return;
+      setState(() {
+        _tileLayer = VectorTileLayer(
+          theme: m.theme,
+          tileProviders: TileProviders({OfflineMap.sourceName: m.provider}),
+          // While zooming, keep showing nearby zoom levels' tiles instead of blank squares.
+          maximumTileSubstitutionDifference: 3,
+          // Tiles stop at zoom 15; closer than that, they are drawn larger.
+          maximumZoom: 20,
+        );
+      });
     }).catchError((Object e) {
       debugPrint('Offline map failed to load: $e');
     });
@@ -79,7 +101,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   @override
   void dispose() {
     _timer?.cancel();
+    _bannerTimer?.cancel();
     _markerAnimController?.dispose();
+    _busPos.dispose();
     super.dispose();
   }
 
@@ -373,6 +397,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         _busLocation = target;
         _displayBusLocation = target;
       });
+      _busPos.value = target;
       return;
     }
 
@@ -417,9 +442,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       final t = curved.value;
       final interpolated = _lerpLatLng(_previousBusLocation!, _busLocation!, t);
 
-      setState(() {
-        _displayBusLocation = interpolated;
-      });
+      _displayBusLocation = interpolated;
+      _busPos.value = interpolated; // repaints only the bus marker layer
 
       // Smooth camera follow (only while bus is moving at >3 km/h)
       if (_cameraFollowBus && _speed > 3 && t < 0.95) {
@@ -432,6 +456,14 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
     // Start the glide
     _markerAnimController!.forward();
+  }
+
+  void _showBanner(String text) {
+    _bannerTimer?.cancel();
+    setState(() => _banner = text);
+    _bannerTimer = Timer(const Duration(milliseconds: 1600), () {
+      if (mounted) setState(() => _banner = null);
+    });
   }
 
   /// Linear interpolation between two LatLng points
@@ -519,16 +551,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         ),
         backgroundColor: const Color(0xFF1E3C72),
         elevation: 0,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh_rounded),
-            tooltip: 'Refresh Location',
-            onPressed: () {
-              _fetchLocation();
-              _fetchParentLocation();
-            },
-          ),
-        ],
       ),
       body: _isLoading
           ? const CustomLoading(message: 'Connecting to live bus GPS...')
@@ -554,15 +576,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                     // tile.openstreetmap.org, whose usage policy does not allow apps with this
                     // many users. Until it has opened - a moment, on first use - the map shows a
                     // plain background under the markers rather than nothing at all.
-                    if (_offlineMap != null)
-                      VectorTileLayer(
-                        theme: _offlineMap!.theme,
-                        tileProviders: TileProviders({OfflineMap.sourceName: _offlineMap!.provider}),
-                        // Tiles stop at zoom 15; closer than that, they are drawn larger.
-                        maximumZoom: 20,
-                      )
-                    else
-                      const ColoredBox(color: Color(0xFFF2F0EB), child: SizedBox.expand()),
+                    _tileLayer ?? const ColoredBox(color: Color(0xFFF2F0EB), child: SizedBox.expand()),
 
                     // Road-wise Polyline (following real road geometry via OSRM)
                     if (_roadPolyline.isNotEmpty)
@@ -609,15 +623,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                             ),
                           ),
 
-                        // 3. Live Bus Marker (uses smoothly interpolated position)
-                        if (_displayBusLocation != null)
-                          Marker(
-                            point: _displayBusLocation!,
-                            width: 75,
-                            height: 75,
-                            child: _buildBusMarker(),
-                          ),
-
                         // 4. Parent's Own Location Marker
                         if (_parentLocation != null)
                           Marker(
@@ -632,6 +637,16 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                             ),
                           ),
                       ],
+                    ),
+
+                    // Live bus, in its own layer on top: the 60 fps glide rebuilds only this.
+                    ValueListenableBuilder<LatLng?>(
+                      valueListenable: _busPos,
+                      builder: (context, pos, _) => pos == null
+                          ? const SizedBox.shrink()
+                          : MarkerLayer(markers: [
+                              Marker(point: pos, width: 75, height: 75, child: _buildBusMarker()),
+                            ]),
                     ),
 
                     // Required by the OpenStreetMap licence (ODbL): visible, but small and quiet.
@@ -661,67 +676,51 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
 
 
-                // 3. Floating Map Controls (Right Side)
+                // 3. One floating control. "Locate Now" in the card below already finds, centres on
+                //    and follows the bus; this brings the bus, home stop and school into view together.
+                //    The separate recentre-bus / follow / home / school / my-location buttons repeated
+                //    those two and crowded the map.
                 Positioned(
                   right: 14,
                   top: 16,
-                  child: Column(
-                    children: [
-                      _buildFloatingAction(
-                        icon: Icons.crop_free_rounded,
-                        tooltip: 'Fit All Stops',
-                        onTap: _fitAllMarkers,
+                  child: _buildFloatingAction(
+                    icon: Icons.crop_free_rounded,
+                    tooltip: 'Show bus, home and school',
+                    onTap: _fitAllMarkers,
+                  ),
+                ),
+
+                // Status banner, just under the header.
+                Positioned(
+                  top: 12,
+                  left: 0,
+                  right: 0,
+                  child: IgnorePointer(
+                    child: Center(
+                      child: AnimatedOpacity(
+                        opacity: _banner == null ? 0 : 1,
+                        duration: const Duration(milliseconds: 200),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1E3C72),
+                            borderRadius: BorderRadius.circular(20),
+                            boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 8, offset: Offset(0, 2))],
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const SizedBox(
+                                width: 12, height: 12,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(_banner ?? '', style: const TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w600)),
+                            ],
+                          ),
+                        ),
                       ),
-                      const SizedBox(height: 8),
-                      // Camera follow toggle (like Uber's recenter)
-                      if (_displayBusLocation != null)
-                        _buildFloatingAction(
-                          icon: _cameraFollowBus ? Icons.gps_fixed_rounded : Icons.gps_not_fixed_rounded,
-                          tooltip: _cameraFollowBus ? 'Following Bus (Tap to unlock)' : 'Tap to follow Bus',
-                          color: _cameraFollowBus ? const Color(0xFF2E7D32) : const Color(0xFF757575),
-                          onTap: () {
-                            setState(() => _cameraFollowBus = !_cameraFollowBus);
-                            if (_cameraFollowBus && _displayBusLocation != null) {
-                              _mapController.move(_displayBusLocation!, 16.5);
-                            }
-                          },
-                        ),
-                      const SizedBox(height: 8),
-                      if (_displayBusLocation != null)
-                        _buildFloatingAction(
-                          icon: Icons.directions_bus_rounded,
-                          tooltip: 'Recenter Bus',
-                          color: const Color(0xFFE65100),
-                          onTap: () => _mapController.move(_displayBusLocation!, 16.5),
-                        ),
-                      if (_homeLocation != null) ...[
-                        const SizedBox(height: 8),
-                        _buildFloatingAction(
-                          icon: Icons.home_rounded,
-                          tooltip: 'Recenter Home',
-                          color: const Color(0xFF2E7D32),
-                          onTap: () => _mapController.move(_homeLocation!, 16.5),
-                        ),
-                      ],
-                      if (_schoolLocation != null) ...[
-                        const SizedBox(height: 8),
-                        _buildFloatingAction(
-                          icon: Icons.school_rounded,
-                          tooltip: 'Recenter School',
-                          color: const Color(0xFF4A148C),
-                          onTap: () => _mapController.move(_schoolLocation!, 16.5),
-                        ),
-                      ],
-                      if (_parentLocation != null) ...[
-                        const SizedBox(height: 8),
-                        _buildFloatingAction(
-                          icon: Icons.my_location_rounded,
-                          tooltip: 'My Location',
-                          color: const Color(0xFF0288D1),
-                          onTap: () => _mapController.move(_parentLocation!, 16.5),
-                        ),
-                      ],
-                    ],
+                    ),
                   ),
                 ),
 
@@ -1057,14 +1056,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             height: 44,
             child: ElevatedButton.icon(
               onPressed: () {
-                // Show a quick snackbar to assure user
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Locating live bus position...'),
-                    duration: Duration(seconds: 1),
-                    backgroundColor: Color(0xFF1E3C72),
-                  ),
-                );
+                // Shown under the header: a bottom SnackBar sat on top of this very card.
+                _showBanner('Locating live bus position...');
                 _fetchLocation();
                 setState(() => _cameraFollowBus = true);
                 if (_displayBusLocation != null) {
