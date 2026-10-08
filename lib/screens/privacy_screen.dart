@@ -68,7 +68,7 @@ All personal data regarding students and parents is encrypted and strictly acces
           IconButton(
             tooltip: 'Open in Browser',
             icon: const Icon(Icons.open_in_browser_rounded, color: Colors.white),
-            onPressed: () => launchUrl(Uri.parse('https://gps.khanhub.site/privacy.html')),
+            onPressed: () => launchUrl(Uri.parse('https://smartstepgps.cloud/privacy.html')),
           ),
         ],
       ),

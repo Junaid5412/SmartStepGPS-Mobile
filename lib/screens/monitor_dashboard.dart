@@ -657,7 +657,7 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
               title: const Text('Privacy Policy'),
               onTap: () {
                 Navigator.pop(context);
-                launchUrl(Uri.parse('https://gps.khanhub.site/privacy.html'));
+                launchUrl(Uri.parse('https://smartstepgps.cloud/privacy.html'));
               },
             ),
             ListTile(
@@ -665,7 +665,7 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
               title: const Text('About Us'),
               onTap: () {
                 Navigator.pop(context);
-                launchUrl(Uri.parse('https://gps.khanhub.site/about.html'));
+                launchUrl(Uri.parse('https://smartstepgps.cloud/about.html'));
               },
             ),
             const Spacer(),

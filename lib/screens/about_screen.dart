@@ -62,7 +62,7 @@ We provide industry-leading fleet management and student safety tracking solutio
           IconButton(
             tooltip: 'Open in Browser',
             icon: const Icon(Icons.open_in_browser_rounded, color: Colors.white),
-            onPressed: () => launchUrl(Uri.parse('https://gps.khanhub.site/about.html')),
+            onPressed: () => launchUrl(Uri.parse('https://smartstepgps.cloud/about.html')),
           ),
         ],
       ),

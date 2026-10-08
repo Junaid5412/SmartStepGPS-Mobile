@@ -5,7 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class ApiService {
-  static const String defaultBaseUrl = 'https://gps.khanhub.site/api/mobile';
+  static const String defaultBaseUrl = 'https://smartstepgps.cloud/api/mobile';
   static String baseUrl = defaultBaseUrl;
 
   static const _secureStorage = FlutterSecureStorage();
@@ -40,7 +40,7 @@ class ApiService {
   /// writing `http://attacker.example/` there would have sent every request, including the login
   /// credentials and the Bearer token, to that host in cleartext. Scheme and host are now both
   /// checked, and anything that fails falls back to the built-in default.
-  static const List<String> _allowedHosts = ['gps.khanhub.site'];
+  static const List<String> _allowedHosts = ['smartstepgps.cloud'];
 
   static bool _isAllowedUrl(String url) {
     final uri = Uri.tryParse(url);

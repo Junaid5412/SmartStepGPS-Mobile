@@ -60,7 +60,7 @@ Parents can submit student absence and leave notifications via the portal. Submi
 The service is provided on an "as is" and "as available" basis. We reserve the right to modify or discontinue features, update software versions, or perform maintenance with or without notice.
 
 7. Contact & Support
-For any questions regarding these terms, school bus routes, or technical support, please contact your school administration or email support@khanhub.site.
+For any questions regarding these terms, school bus routes, or technical support, please contact your school administration or email support@smartstepgps.cloud.
 ''';
 
   @override
@@ -79,7 +79,7 @@ For any questions regarding these terms, school bus routes, or technical support
           IconButton(
             tooltip: 'Open in Browser',
             icon: const Icon(Icons.open_in_browser_rounded, color: Colors.white),
-            onPressed: () => launchUrl(Uri.parse('https://gps.khanhub.site/terms.html')),
+            onPressed: () => launchUrl(Uri.parse('https://smartstepgps.cloud/terms.html')),
           ),
         ],
       ),
@@ -181,7 +181,7 @@ For any questions regarding these terms, school bus routes, or technical support
                     // External Web Policy Link
                     Center(
                       child: TextButton.icon(
-                        onPressed: () => launchUrl(Uri.parse('https://gps.khanhub.site/privacy.html')),
+                        onPressed: () => launchUrl(Uri.parse('https://smartstepgps.cloud/privacy.html')),
                         icon: const Icon(Icons.shield_outlined, size: 18, color: Color(0xFF1565C0)),
                         label: const Text(
                           'View Privacy Policy',
