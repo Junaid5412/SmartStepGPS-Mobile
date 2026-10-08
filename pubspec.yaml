@@ -6,7 +6,7 @@ publish_to: 'none'
 # The number after + is the BUILD number (CFBundleVersion). Apple refuses any upload whose build
 # number is not higher than one already accepted, and build 1 has been used. Bump this before every
 # upload; the version before + only changes when the release itself changes.
-version: 1.0.2+5
+version: 1.0.3+6
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -20,6 +20,15 @@ dependencies:
   flutter_secure_storage: ^9.0.0
   provider: ^6.0.5
   flutter_map: ^8.3.2
+  # Offline English map of Qatar (see tool/map/README.md). vector_map_tiles is pinned to the 9.x
+  # pre-release because it is the first line that supports flutter_map 8; the stable 8.0.0 needs
+  # flutter_map 7. Pinned exactly so a new beta cannot change behaviour under a store build.
+  # The PMTiles archive is read by lib/services/pmtiles_reader.dart rather than the pmtiles
+  # package: pmtiles 2.x needs protobuf 6 where vector_map_tiles needs 3, and pmtiles 1.x needs
+  # latlong2 0.9 where flutter_map 8 needs 0.10, so neither line can be installed alongside.
+  vector_map_tiles: 9.0.0-beta.13
+  vector_tile_renderer: ^6.1.0   # Theme / ThemeReader for the map style
+  path_provider: ^2.1.5
   latlong2: ^0.10.1
   url_launcher: ^6.3.2
   # lib/screens/privacy_screen.dart imports this. It only worked because some other package happened
@@ -37,6 +46,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/
+    - assets/map/
 # Launcher icons. The source art is the monogram ALONE, pre-padded, not the full logo: the wordmark
 # is three lines of type that are unreadable at 48dp and get clipped by every circular launcher mask.
 # tool/icon/ is outside the bundled assets, so this artwork is not shipped inside the APK.

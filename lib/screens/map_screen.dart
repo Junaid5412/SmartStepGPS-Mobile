@@ -6,7 +6,9 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
+import 'package:vector_map_tiles/vector_map_tiles.dart';
 import '../services/api_service.dart';
+import '../services/offline_map.dart';
 import '../widgets/custom_loading.dart';
 
 class MapScreen extends StatefulWidget {
@@ -21,6 +23,9 @@ class MapScreen extends StatefulWidget {
 class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   final MapController _mapController = MapController();
   Timer? _timer;
+
+  /// The bundled English map of Qatar; null for the moment it takes to open on first use.
+  OfflineMap? _offlineMap;
 
   bool _isLoading = true;
   bool _isActiveWindow = true;
@@ -59,6 +64,11 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    OfflineMap.load().then((m) {
+      if (mounted) setState(() => _offlineMap = m);
+    }).catchError((Object e) {
+      debugPrint('Offline map failed to load: $e');
+    });
     _parseInitialStudentData();
     _fetchParentLocation();
     _fetchLocation();
@@ -540,10 +550,19 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                     },
                   ),
                   children: [
-                    TileLayer(
-                      urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                      userAgentPackageName: 'com.smartstep.gps',
-                    ),
+                    // Bundled English map of Qatar (works offline). It replaces
+                    // tile.openstreetmap.org, whose usage policy does not allow apps with this
+                    // many users. Until it has opened - a moment, on first use - the map shows a
+                    // plain background under the markers rather than nothing at all.
+                    if (_offlineMap != null)
+                      VectorTileLayer(
+                        theme: _offlineMap!.theme,
+                        tileProviders: TileProviders({OfflineMap.sourceName: _offlineMap!.provider}),
+                        // Tiles stop at zoom 15; closer than that, they are drawn larger.
+                        maximumZoom: 20,
+                      )
+                    else
+                      const ColoredBox(color: Color(0xFFF2F0EB), child: SizedBox.expand()),
 
                     // Road-wise Polyline (following real road geometry via OSRM)
                     if (_roadPolyline.isNotEmpty)
@@ -613,6 +632,13 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                             ),
                           ),
                       ],
+                    ),
+
+                    // Required by the OpenStreetMap licence (ODbL). Top-left, because the map
+                    // controls sit top-right and the info card covers the bottom of the map.
+                    const SimpleAttributionWidget(
+                      source: Text(OfflineMap.attribution),
+                      alignment: Alignment.topLeft,
                     ),
                   ],
                 ),
