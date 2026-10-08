@@ -41,7 +41,7 @@ class _AboutScreenState extends State<AboutScreen> {
   }
 
   static const String _defaultAbout = '''
-Smart Step GPS Transport
+Smart Step School Bus
 
 We provide industry-leading fleet management and student safety tracking solutions. Our mission is to ensure every student travels safely, with complete transparency for parents and school administration.
 ''';

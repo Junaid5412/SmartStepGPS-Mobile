@@ -56,7 +56,7 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
           'Announcements',
           style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
         ),
-        backgroundColor: Colors.blueAccent,
+        backgroundColor: const Color(0xFF1E3C72),
         elevation: 0,
         iconTheme: const IconThemeData(color: Colors.white),
         actions: [
