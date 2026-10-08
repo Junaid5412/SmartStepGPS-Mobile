@@ -135,10 +135,10 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
       actionColor = const Color(0xFF7C3AED);
       actionDesc = _activeShift == 'morning'
           ? 'Child is being taken to School by their own parent this morning. Counts as PRESENT - not an absence.'
-          : 'Child is being collected from School by their own parent this afternoon. Counts as PRESENT - not an absence.';
+          : 'Child is being collected from School by their own parent this evening. Counts as PRESENT - not an absence.';
     }
 
-    final shiftLabel = _activeShift == 'morning' ? 'Morning Shift' : 'Afternoon Shift';
+    final shiftLabel = '$_shiftName shift';
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -220,7 +220,7 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
     if (!mounted) return;
 
     if (response['success'] == true) {
-      final shiftLabel = _activeShift == 'morning' ? 'Morning' : 'Afternoon';
+      final shiftLabel = _shiftName;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(pos == null
             ? 'Attendance recorded for $shiftLabel shift (no GPS stamp — location unavailable)'
@@ -410,6 +410,116 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
     return timeStr;
   }
 
+  /// "Evening" to the people using the app; the API and the database keep calling it 'afternoon'.
+  String get _shiftName => _activeShift == 'morning' ? 'Morning' : 'Evening';
+  Color get _shiftColor => _activeShift == 'morning' ? const Color(0xFF1565C0) : const Color(0xFF4338CA);
+
+  /// Absent / leave / parent are the exceptions, so they live behind one button instead of three.
+  void _showNotTravellingSheet(int studentId, String studentName) {
+    final isMorning = _activeShift == 'morning';
+    final options = [
+      ['absent', Icons.cancel_rounded, Colors.redAccent, 'Absent', 'Not at the stop, not coming today'],
+      ['leave', Icons.event_busy_rounded, Colors.orange[800]!, 'On leave', 'Approved leave for today'],
+      ['by_parent', Icons.family_restroom_rounded, _byParentColor,
+        isMorning ? 'Parent taking to school' : 'Parent collecting from school',
+        'Counts as present, just not on the bus'],
+    ];
+
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(studentName, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 2),
+              Text('$_shiftName shift · why is this child not on the bus?',
+                  style: TextStyle(fontSize: 13, color: Colors.grey[600])),
+              const SizedBox(height: 10),
+              ...options.map((o) => ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                    leading: CircleAvatar(
+                      backgroundColor: (o[2] as Color).withOpacity(0.12),
+                      child: Icon(o[1] as IconData, color: o[2] as Color),
+                    ),
+                    title: Text(o[3] as String, style: const TextStyle(fontWeight: FontWeight.w600)),
+                    subtitle: Text(o[4] as String, style: const TextStyle(fontSize: 12)),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: () {
+                      Navigator.pop(sheetContext);
+                      _confirmAndMarkAttendance(studentId, studentName, o[0] as String);
+                    },
+                  )),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _shiftOption({
+    required String key,
+    required String title,
+    required String route,
+    required String time,
+    required IconData icon,
+    required Color color,
+  }) {
+    final selected = _activeShift == key;
+    return Expanded(
+      child: InkWell(
+        onTap: () {
+          if (!selected) setState(() => _activeShift = key);
+        },
+        borderRadius: BorderRadius.circular(12),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 10),
+          decoration: BoxDecoration(
+            color: selected ? color : Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 34, height: 34,
+                decoration: BoxDecoration(
+                  color: selected ? Colors.white.withOpacity(0.18) : color.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, size: 19, color: selected ? Colors.amberAccent : color),
+              ),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title,
+                        style: TextStyle(
+                          color: selected ? Colors.white : const Color(0xFF1E293B),
+                          fontWeight: FontWeight.bold, fontSize: 14)),
+                    Text(route,
+                        maxLines: 1, overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: selected ? Colors.white.withOpacity(0.85) : Colors.grey[700],
+                          fontSize: 11, fontWeight: FontWeight.w600)),
+                    Text(time,
+                        maxLines: 1, overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: selected ? Colors.white70 : Colors.grey[500], fontSize: 10)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildShiftSelector() {
     final mStart = _formatTimeStr(_shiftTimings?['morning_start'] ?? '05:30:00');
     final mEnd = _formatTimeStr(_shiftTimings?['morning_end'] ?? '07:30:00');
@@ -420,116 +530,20 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 8, offset: const Offset(0, 2)),
-        ],
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 8, offset: const Offset(0, 2))],
       ),
-      padding: const EdgeInsets.all(4),
+      padding: const EdgeInsets.all(5),
       child: Row(
         children: [
-          // Morning Tab
-          Expanded(
-            child: InkWell(
-              onTap: () {
-                if (_activeShift != 'morning') {
-                  setState(() => _activeShift = 'morning');
-                }
-              },
-              borderRadius: BorderRadius.circular(10),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
-                decoration: BoxDecoration(
-                  color: _activeShift == 'morning' ? const Color(0xFF1565C0) : Colors.transparent,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Column(
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.wb_sunny_rounded,
-                          size: 15,
-                          color: _activeShift == 'morning' ? Colors.amberAccent : Colors.orange,
-                        ),
-                        const SizedBox(width: 5),
-                        Text(
-                          'Morning (PickUp)',
-                          style: TextStyle(
-                            color: _activeShift == 'morning' ? Colors.white : const Color(0xFF1E293B),
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12.5,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '$mStart - $mEnd',
-                      style: TextStyle(
-                        color: _activeShift == 'morning' ? Colors.white70 : Colors.grey[600],
-                        fontSize: 10,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+          _shiftOption(
+            key: 'morning', title: 'Morning', route: 'Home → School',
+            time: '$mStart - $mEnd', icon: Icons.wb_sunny_rounded, color: const Color(0xFF1565C0),
           ),
-          const SizedBox(width: 4),
-          // Afternoon Tab
-          Expanded(
-            child: InkWell(
-              onTap: () {
-                if (_activeShift != 'afternoon') {
-                  setState(() => _activeShift = 'afternoon');
-                }
-              },
-              borderRadius: BorderRadius.circular(10),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
-                decoration: BoxDecoration(
-                  color: _activeShift == 'afternoon' ? const Color(0xFF4338CA) : Colors.transparent,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Column(
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.nights_stay_rounded,
-                          size: 15,
-                          color: _activeShift == 'afternoon' ? Colors.amberAccent : const Color(0xFF6366F1),
-                        ),
-                        const SizedBox(width: 5),
-                        Text(
-                          'Afternoon (DropOff)',
-                          style: TextStyle(
-                            color: _activeShift == 'afternoon' ? Colors.white : const Color(0xFF1E293B),
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12.5,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '$aStart - $aEnd',
-                      style: TextStyle(
-                        color: _activeShift == 'afternoon' ? Colors.white70 : Colors.grey[600],
-                        fontSize: 10,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+          const SizedBox(width: 5),
+          _shiftOption(
+            key: 'afternoon', title: 'Evening', route: 'School → Home',
+            time: '$aStart - $aEnd', icon: Icons.nights_stay_rounded, color: const Color(0xFF4338CA),
           ),
         ],
       ),
@@ -1075,7 +1089,7 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    '${_activeShift == 'morning' ? 'Morning' : 'Afternoon'} Completed (${_getStatusLabel(status['event_type'])}) • Locked',
+                    '$_shiftName done · ${_getStatusLabel(status['event_type'])}',
                     style: TextStyle(color: Colors.grey[700], fontSize: 11.5, fontWeight: FontWeight.w600),
                   ),
                 ),
@@ -1093,13 +1107,13 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
               Expanded(
                 flex: 3,
                 child: SizedBox(
-                  height: 36,
+                  height: 42,
                   child: ElevatedButton.icon(
                     onPressed: () => _confirmAndMarkAttendance(student['id'], studentName, 'dropoff'),
                     icon: Icon(_activeShift == 'morning' ? Icons.school : Icons.home, size: 15),
                     label: Text(
-                      _activeShift == 'morning' ? 'Drop Off at School' : 'Drop Off at Home',
-                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                      _activeShift == 'morning' ? 'Dropped at school' : 'Dropped at home',
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
                     ),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF2E7D32),
@@ -1131,82 +1145,53 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
               ),
             ],
           )
-        // 3. If Pending -> Display PICK UP, ABSENT, LEAVE (Stage 1)
+        // 3. Pending -> ONE clear next step for this shift, plus a single "Not travelling" button
+        //    that holds the less common outcomes (absent / leave / parent). Four buttons side by
+        //    side was hard to hit on a moving bus and made every child's card look the same.
         else
           Row(
             children: [
               Expanded(
-                flex: 3,
                 child: SizedBox(
-                  height: 34,
+                  height: 42,
                   child: ElevatedButton.icon(
                     onPressed: () => _confirmAndMarkAttendance(student['id'], studentName, 'pickup'),
-                    icon: const Icon(Icons.directions_bus, size: 14),
+                    icon: Icon(_activeShift == 'morning' ? Icons.home_rounded : Icons.school_rounded, size: 17),
                     label: Text(
-                      _activeShift == 'morning' ? 'Pick Up (Home)' : 'Pick Up (School)',
-                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                      // Adding the BP button made this row four buttons wide. It still fits on a
-                      // 320dp screen, but with little to spare, so let the label shorten rather
-                      // than paint overflow stripes across the card on the narrowest phones.
+                      _activeShift == 'morning' ? 'Picked up from home' : 'Boarded at school',
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF1565C0),
+                      backgroundColor: _shiftColor,
                       foregroundColor: Colors.white,
-                      padding: EdgeInsets.zero,
                       elevation: 1,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                     ),
                   ),
                 ),
               ),
-              const SizedBox(width: 6),
-
-              // Absent Button
+              const SizedBox(width: 8),
               SizedBox(
-                height: 34,
+                height: 42,
                 child: OutlinedButton(
-                  onPressed: () => _confirmAndMarkAttendance(student['id'], studentName, 'absent'),
+                  onPressed: () => _showNotTravellingSheet(student['id'], studentName),
                   style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: Colors.redAccent),
-                    foregroundColor: Colors.redAccent,
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    side: BorderSide(color: Colors.grey.withOpacity(0.45)),
+                    foregroundColor: const Color(0xFF475569),
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                   ),
-                  child: const Text('Absent', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
-                ),
-              ),
-              const SizedBox(width: 6),
-
-              // Leave Button
-              SizedBox(
-                height: 34,
-                child: OutlinedButton(
-                  onPressed: () => _confirmAndMarkAttendance(student['id'], studentName, 'leave'),
-                  style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: Colors.orange),
-                    foregroundColor: Colors.orange[800],
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('Not travelling', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                      SizedBox(width: 2),
+                      Icon(Icons.expand_more_rounded, size: 18),
+                    ],
                   ),
-                  child: const Text('Leave', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
-                ),
-              ),
-              const SizedBox(width: 6),
-
-              // By Parents (BP) Button
-              SizedBox(
-                height: 34,
-                child: OutlinedButton(
-                  onPressed: () => _confirmAndMarkAttendance(student['id'], studentName, 'by_parent'),
-                  style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: _byParentColor),
-                    foregroundColor: _byParentColor,
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                  ),
-                  child: const Text('BP', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
                 ),
               ),
             ],
