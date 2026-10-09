@@ -1,0 +1,104 @@
+name: Upload iOS to App Store Connect
+
+# MANUAL ONLY. Pushes just build (ios_build.yml); nothing reaches Apple until you run this.
+#
+#   Actions -> "Upload iOS to App Store Connect" -> Run workflow
+#     Build run ID: leave empty to upload the newest successful "Build iOS IPA" build on main,
+#                   or paste the run ID of the exact build you tested (the number at the end of
+#                   that run's address: .../actions/runs/<run ID>).
+#
+# It does not rebuild: it uploads the signed IPA that build already made, so what goes to Apple
+# is exactly the build you tested.
+#
+# Needs the App Store Connect API key secrets: APP_STORE_CONNECT_KEY_ID,
+# APP_STORE_CONNECT_ISSUER_ID and APP_STORE_CONNECT_API_KEY.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Build run ID (empty = newest successful iOS build on main)"
+        required: false
+        default: ""
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  upload_ios:
+    name: Upload to App Store Connect
+    runs-on: macos-latest
+
+    steps:
+      - name: Choose the build
+        id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          set -euo pipefail
+          if [ -z "$RUN_ID" ]; then
+            RUN_ID="$(gh run list -R "$GITHUB_REPOSITORY" --workflow ios_build.yml --branch main --status success --limit 1 --json databaseId -q '.[0].databaseId')"
+          fi
+          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+            echo "::error::No successful 'Build iOS IPA' run found. Build first, then run this."
+            exit 1
+          fi
+          gh run view "$RUN_ID" -R "$GITHUB_REPOSITORY" --json displayTitle,headSha,createdAt \
+            -q '"Built \(.createdAt) from commit \(.headSha[0:7]): \(.displayTitle)"' || true
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "Uploading the IPA from build run $RUN_ID"
+
+      - name: Download the signed IPA from that build
+        uses: actions/download-artifact@v4
+        with:
+          name: Smart_Step_GPS_iOS_SIGNED
+          run-id: ${{ steps.pick.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: ipa
+
+      - name: Show what will be uploaded
+        run: |
+          set -euo pipefail
+          IPA="$(ls ipa/*.ipa | head -n 1)"
+          mkdir -p /tmp/ipainfo && unzip -q -o "$IPA" 'Payload/*.app/Info.plist' -d /tmp/ipainfo
+          PLIST="$(ls /tmp/ipainfo/Payload/*.app/Info.plist | head -n 1)"
+          echo "File:    $IPA"
+          echo "App:     $(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST")"
+          echo "Version: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST") ($(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST"))"
+
+      - name: Upload to App Store Connect
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$KEY_ID" ] || [ -z "$ISSUER_ID" ] || [ -z "$API_KEY" ]; then
+            echo "::error::Add APP_STORE_CONNECT_KEY_ID, APP_STORE_CONNECT_ISSUER_ID and APP_STORE_CONNECT_API_KEY secrets first."
+            exit 1
+          fi
+          # altool looks for the key in ~/private_keys/AuthKey_<KEY_ID>.p8.
+          mkdir -p ~/private_keys
+          # Accept the raw .p8 text, or the "key" value copied from a JSON key file, where line
+          # breaks are written as \n and the value may still have its quotes and trailing comma.
+          printf '%s\n' "$API_KEY" | perl -pe 's/\x5Cn/\n/g; s/^[ \t]*"//; s/"[ \t]*,?[ \t]*$//' > ~/private_keys/AuthKey_${KEY_ID}.p8
+          grep -q "BEGIN PRIVATE KEY" ~/private_keys/AuthKey_${KEY_ID}.p8 \
+            || { echo "::error::APP_STORE_CONNECT_API_KEY does not look like a .p8 private key"; exit 1; }
+          IPA="$(ls ipa/*.ipa | head -n 1)"
+          set +e
+          OUT="$(xcrun altool --upload-app --type ios --file "$IPA" --apiKey "$KEY_ID" --apiIssuer "$ISSUER_ID" 2>&1)"
+          CODE=$?
+          set -e
+          rm -f ~/private_keys/AuthKey_${KEY_ID}.p8
+          echo "$OUT"
+          if [ $CODE -eq 0 ]; then
+            echo "Uploaded. The build appears in App Store Connect -> TestFlight after Apple processes it (10-30 min)."
+          elif echo "$OUT" | grep -qiE "previously uploaded|already been (used|uploaded)|DUPLICATE|must be higher|must contain a higher"; then
+            echo "::error::This build number is already in App Store Connect. Bump the version in pubspec.yaml (e.g. 1.0.7+10), push, and upload the new build."
+            exit 1
+          else
+            echo "::error::Upload to App Store Connect failed - see the output above."
+            exit 1
+          fi
