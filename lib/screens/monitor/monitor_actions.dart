@@ -71,7 +71,7 @@ class MonitorActions {
           ? ('Dropped at school', 'Safely dropped off at school.')
           : ('Dropped at home', 'Safely dropped off at home.'),
       'absent' => ('Absent', 'Not at the stop and not coming today.'),
-      'leave' => ('On leave', 'On approved leave today.'),
+      'leave' => ('Not coming', 'The parent said this child is not coming today.'),
       'by_parent' => m
           ? ('Parent taking to school', 'A parent is taking the child to school. Counts as present.')
           : ('Parent collecting', 'A parent is collecting the child from school. Counts as present.'),
@@ -120,7 +120,7 @@ class MonitorActions {
     final name = student['name']?.toString() ?? 'Student';
     final options = [
       ('absent', 'Absent', 'Not at the stop, not coming today'),
-      ('leave', 'On leave', 'Approved leave for today'),
+      ('leave', 'On leave', 'The parent said in advance'),
       ('by_parent', w.isMorning ? 'Parent taking to school' : 'Parent collecting from school',
           'Counts as present, just not on the bus'),
     ];

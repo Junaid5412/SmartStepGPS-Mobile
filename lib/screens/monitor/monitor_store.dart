@@ -244,6 +244,24 @@ class MonitorStore extends ChangeNotifier {
     return Stage.done;
   }
 
+  /// The parent's "Not on Bus" choice for this child on this shift: 'parent' (the parent drops or
+  /// collects) or 'absent' (not coming), or null when the child rides as usual.
+  String? noticeFor(dynamic student, String shift) {
+    final n = student['notice'];
+    if (n is! Map) return null;
+    final c = '${n[shift == 'morning' ? 'morning' : 'evening']}';
+    return (c == 'parent' || c == 'absent') ? c : null;
+  }
+
+  /// The notice itself (reason, note, summary) for the card.
+  Map<String, dynamic>? noticeOf(dynamic student) {
+    final n = student['notice'];
+    return n is Map ? Map<String, dynamic>.from(n) : null;
+  }
+
+  /// Children with a notice today (either trip), in roster order.
+  List<dynamic> get noticedStudents => students.where((s) => s['notice'] is Map).toList();
+
   ShiftCounts counts(String shift) {
     final c = ShiftCounts();
     for (final s in students) {

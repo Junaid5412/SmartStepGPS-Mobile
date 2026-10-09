@@ -490,6 +490,9 @@ class _MonitorShiftViewState extends State<MonitorShiftView> {
     final type = status?['event_type']?.toString();
     final at = _clock(status?['created_at']);
     final m = w.isMorning;
+    // A parent's "Not on Bus" notice for this trip, while the child is still to be dealt with.
+    final notice = _stage == Stage.waiting ? store.noticeFor(s, w.key) : null;
+    final banner = notice == null ? null : _noticeBanner(w, s, notice);
 
     final info = Row(
       children: [
@@ -519,6 +522,36 @@ class _MonitorShiftViewState extends State<MonitorShiftView> {
 
     Widget buttons;
     switch (_stage) {
+      case Stage.waiting when notice != null:
+        // The parent said so in advance: confirming records it - "by parent" for a drop or pick-up,
+        // "on leave" for a child who is not coming. If the child turns up anyway, pick them up.
+        buttons = Row(
+          children: [
+            Expanded(
+              child: _primary(
+                w,
+                notice == 'parent' ? Icons.family_restroom_rounded : Icons.event_busy_rounded,
+                notice == 'parent' ? (m ? 'Confirm - parent drops' : 'Confirm - parent picks up') : 'Confirm - not coming',
+                () => actions.mark(w, s, notice == 'parent' ? 'by_parent' : 'leave'),
+                color: notice == 'parent' ? MonitorColors.byParent : MonitorColors.red,
+              ),
+            ),
+            const SizedBox(width: 8),
+            SizedBox(
+              height: 46,
+              child: OutlinedButton(
+                onPressed: () => actions.mark(w, s, 'pickup'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF475569),
+                  side: const BorderSide(color: MonitorColors.line, width: 1.5),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                child: Text(m ? 'Picked up' : 'Boarded', style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+              ),
+            ),
+          ],
+        );
       case Stage.waiting:
         buttons = Row(
           children: [
@@ -573,16 +606,64 @@ class _MonitorShiftViewState extends State<MonitorShiftView> {
         // Done rows and wide screens: one line. Phones: the buttons go full width under the name,
         // where a thumb can hit them on a moving bus.
         if (_stage == Stage.done || box.maxWidth >= 520) {
-          return Row(
+          final row = Row(
             children: [
               Expanded(child: info),
               const SizedBox(width: 12),
-              if (_stage == Stage.done) buttons else SizedBox(width: _stage == Stage.waiting ? 300 : 220, child: buttons),
+              if (_stage == Stage.done) buttons else SizedBox(width: _stage == Stage.waiting ? 330 : 220, child: buttons),
             ],
           );
+          if (banner == null) return row;
+          return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [row, const SizedBox(height: 10), banner]);
         }
-        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [info, const SizedBox(height: 10), buttons]);
+        // Phones: the parent's message sits between the name and the buttons, so it is read first.
+        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          info,
+          if (banner != null) ...[const SizedBox(height: 10), banner],
+          const SizedBox(height: 10),
+          buttons,
+        ]);
       }),
+    );
+  }
+
+  /// The parent's message on the child's card: what happens on this trip, why, and their note.
+  Widget _noticeBanner(ShiftWindow w, dynamic s, String notice) {
+    final n = store.noticeOf(s) ?? const {};
+    final parent = notice == 'parent';
+    final color = parent ? MonitorColors.byParent : MonitorColors.red;
+    final reason = '${n['reason'] ?? ''}';
+    final note = '${n['comment'] ?? ''}'.trim();
+    final text = parent
+        ? (w.isMorning ? 'Parent will drop at school this morning' : 'Parent will pick up from school')
+        : 'Not coming${reason.isNotEmpty && reason != 'Parent' ? ' - $reason' : ''}';
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 9, 10, 9),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.no_transfer_rounded, size: 18, color: color),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Not on Bus: $text', style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 13)),
+                if (note.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text('"$note"', style: const TextStyle(color: MonitorColors.ink, fontSize: 12.5)),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 

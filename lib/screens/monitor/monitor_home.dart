@@ -37,6 +37,10 @@ class MonitorHome extends StatelessWidget {
                   children: [
                     if (store.error != null && !store.loaded) ErrorNote(text: store.error!, onRetry: store.load),
                     if (focus != null) _hero(context, focus),
+                    if (store.noticedStudents.isNotEmpty) ...[
+                      const SizedBox(height: 14),
+                      _notices(),
+                    ],
                     const SizedBox(height: 18),
                     const SectionTitle('Today\'s shifts'),
                     const SizedBox(height: 10),
@@ -257,6 +261,49 @@ class MonitorHome extends StatelessWidget {
                     ),
                   ),
           ),
+        ],
+      ),
+    );
+  }
+
+  /// Today's "Not on Bus" notices from parents, so the monitor knows before setting off.
+  Widget _notices() {
+    final list = store.noticedStudents;
+    return SurfaceCard(
+      onTap: store.focus == null ? null : () => onOpenShift(store.focus!.key),
+      borderColor: MonitorColors.byParent.withValues(alpha: 0.4),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(children: [
+            const IconTile(icon: Icons.no_transfer_rounded, color: MonitorColors.byParent, size: 34),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text('Not on Bus today (${list.length})',
+                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: MonitorColors.ink)),
+            ),
+            const Icon(Icons.chevron_right_rounded, color: MonitorColors.muted),
+          ]),
+          const SizedBox(height: 8),
+          for (final s in list.take(4))
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text.rich(
+                TextSpan(children: [
+                  TextSpan(text: '${s['name'] ?? 'Student'}  ', style: const TextStyle(fontWeight: FontWeight.w700, color: MonitorColors.ink)),
+                  TextSpan(text: '${(s['notice'] as Map)['summary'] ?? ''}', style: const TextStyle(color: MonitorColors.muted)),
+                ]),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 13),
+              ),
+            ),
+          if (list.length > 4)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text('+ ${list.length - 4} more', style: const TextStyle(fontSize: 12.5, color: MonitorColors.muted)),
+            ),
         ],
       ),
     );

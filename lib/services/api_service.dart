@@ -158,17 +158,40 @@ class ApiService {
     return _safeDecode(response.body);
   }
 
-  static Future<Map<String, dynamic>> submitLeave(int studentId, String leaveDate, String reason, String comment) async {
+  /// "Not on Bus": tell the bus a child will not ride it for one or both trips, for one day or a range.
+  /// [morning] / [evening] are 'bus', 'parent' or 'absent'; [reason] is needed when either is 'absent'.
+  static Future<Map<String, dynamic>> submitNotOnBus({
+    required List<int> studentIds,
+    required String dateFrom,
+    required String dateTo,
+    required String morning,
+    required String evening,
+    String reason = '',
+    String comment = '',
+  }) async {
     final token = await getToken();
     final response = await http.post(
       Uri.parse('$baseUrl/leave_request.php'),
       headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
       body: jsonEncode({
-        'student_id': studentId,
-        'leave_date': leaveDate,
+        'student_ids': studentIds,
+        'date_from': dateFrom,
+        'date_to': dateTo,
+        'morning': morning,
+        'evening': evening,
         'reason': reason,
         'comment': comment,
       }),
+    );
+    return _safeDecode(response.body);
+  }
+
+  static Future<Map<String, dynamic>> cancelNotOnBus(int id) async {
+    final token = await getToken();
+    final response = await http.post(
+      Uri.parse('$baseUrl/leave_request.php'),
+      headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+      body: jsonEncode({'action': 'cancel', 'id': id}),
     );
     return _safeDecode(response.body);
   }

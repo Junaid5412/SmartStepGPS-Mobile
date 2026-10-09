@@ -6,7 +6,7 @@ import '../widgets/custom_loading.dart';
 import 'map_screen.dart';
 import 'login_screen.dart';
 import 'attendance_screen.dart';
-import 'leave_screen.dart';
+import 'not_on_bus_screen.dart';
 import 'announcements_screen.dart';
 import 'parent_profile_screen.dart';
 import 'terms_screen.dart';
@@ -601,8 +601,8 @@ class _ParentDashboardState extends State<ParentDashboard> {
       }));
     }
     if (_modules['leave'] == true) {
-      modules.add(_buildModuleCard('Leave', Icons.event_busy_rounded, const [Color(0xFFE53935), Color(0xFFC62828)], () {
-        Navigator.push(context, MaterialPageRoute(builder: (_) => LeaveScreen(students: _students)));
+      modules.add(_buildModuleCard('Not on Bus', Icons.no_transfer_rounded, const [Color(0xFFE53935), Color(0xFFC62828)], () {
+        _openNotOnBus();
       }));
     }
 
@@ -704,6 +704,60 @@ class _ParentDashboardState extends State<ParentDashboard> {
     );
   }
 
+  /// Opens Not on Bus, optionally with one child already chosen, and refreshes the child cards on
+  /// return so a notice just sent shows on its card at once.
+  Future<void> _openNotOnBus([int? studentId]) async {
+    await Navigator.push(context, MaterialPageRoute(
+      builder: (_) => NotOnBusScreen(students: _students, initialStudentId: studentId),
+    ));
+    if (mounted) _fetchStudents();
+  }
+
+  /// Under each child: today's notice if there is one, otherwise a one-tap way to send one.
+  Widget _notOnBusLine(dynamic student) {
+    final n = student is Map ? student['not_on_bus_today'] : null;
+    final id = int.tryParse('${student['id']}');
+    if (n is Map) {
+      return InkWell(
+        onTap: () => _openNotOnBus(id),
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF5F3FF),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: const Color(0xFFDDD6FE)),
+          ),
+          child: Row(children: [
+            const Icon(Icons.no_transfer_rounded, size: 16, color: Color(0xFF6D28D9)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text('Today: ${n['summary'] ?? 'Not on the bus'}',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Color(0xFF5B21B6), fontSize: 12.5, fontWeight: FontWeight.w600)),
+            ),
+          ]),
+        ),
+      );
+    }
+    if (_modules['leave'] != true) return const SizedBox.shrink();
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: TextButton.icon(
+        onPressed: () => _openNotOnBus(id),
+        icon: const Icon(Icons.no_transfer_rounded, size: 17),
+        label: const Text('Not on the bus?', style: TextStyle(fontWeight: FontWeight.w700)),
+        style: TextButton.styleFrom(
+          foregroundColor: const Color(0xFFC62828),
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          visualDensity: VisualDensity.compact,
+        ),
+      ),
+    );
+  }
+
   Widget _buildStudentCard(dynamic student) {
     return GestureDetector(
       onTap: () {
@@ -721,8 +775,11 @@ class _ParentDashboardState extends State<ParentDashboard> {
           boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 10, offset: const Offset(0, 4))],
         ),
         child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: Column(
+           crossAxisAlignment: CrossAxisAlignment.stretch,
+           children: [
+           Row(
             children: [
               Container(
                 width: 52, height: 52,
@@ -750,6 +807,11 @@ class _ParentDashboardState extends State<ParentDashboard> {
               ),
               const Icon(Icons.chevron_right_rounded, color: Colors.grey, size: 24),
             ],
+           ),
+           const SizedBox(height: 6),
+           _notOnBusLine(student),
+           const SizedBox(height: 4),
+          ],
           ),
         ),
       ),
