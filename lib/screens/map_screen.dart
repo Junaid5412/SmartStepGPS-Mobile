@@ -51,6 +51,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   double _speed = 0.0;
   String _lastUpdated = '';
   double _busBearing = 0.0;   // heading in degrees (0=north, 90=east)
+  LatLng? _bearingAnchor;     // where that heading was measured from
 
   // Smooth marker animation
   AnimationController? _markerAnimController;
@@ -413,8 +414,16 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       return;
     }
 
-    // Calculate heading/bearing for bus icon rotation
-    _busBearing = _calculateBearing(from, target);
+    // Direction of travel - only over a real move. GPS wanders a few metres even when the bus is
+    // standing still (and the backup position from the monitor's phone differs slightly from the
+    // tracker), which used to spin the arrow the wrong way.
+    final anchor = _bearingAnchor;
+    if (anchor == null) {
+      _bearingAnchor = target;
+    } else if (const Distance().as(LengthUnit.Meter, anchor, target) > 15) {
+      _busBearing = _calculateBearing(anchor, target);
+      _bearingAnchor = target;
+    }
 
     // Save previous → new positions
     _previousBusLocation = from;
@@ -552,6 +561,12 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                   options: MapOptions(
                     initialCenter: _displayBusLocation ?? _busLocation ?? _homeLocation ?? _schoolLocation ?? const LatLng(25.2854, 51.5310),
                     initialZoom: 15.0,
+                    // Street detail goes to zoom 15 and is drawn larger up to 18; closer than that
+                    // the map would go blank.
+                    minZoom: 8,
+                    maxZoom: 18,
+                    // North always up: no two-finger rotating, which left the map turned.
+                    interactionOptions: const InteractionOptions(flags: InteractiveFlag.all & ~InteractiveFlag.rotate),
                     // Disable follow mode when user manually pans the map (like Uber)
                     onPositionChanged: (pos, hasGesture) {
                       if (hasGesture && _cameraFollowBus) {

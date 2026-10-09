@@ -94,6 +94,8 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
   DateTime? _phoneAt;
   LatLng? _bestPrev;
   double _heading = 0;
+  LatLng? _headAnchor; // where the current heading was measured from
+  bool? _headFromTracker;
   final ValueNotifier<_Fix?> _shown = ValueNotifier(null); // the gliding bus arrow
   final ValueNotifier<LatLng?> _phoneDot = ValueNotifier(null);
   late final AnimationController _glide;
@@ -268,7 +270,17 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     final prev = _bestPrev;
     if (prev != null && RoutePlanner.meters(prev, p) < 1) return; // nothing moved
     _bestPrev = p;
-    if (prev != null && RoutePlanner.meters(prev, p) > 6) _heading = RoutePlanner.bearing(prev, p);
+    // Direction of travel. GPS wanders a few metres even when the bus stands still, and the tracker
+    // and the phone disagree by a few metres too - so measure only over a real move (15 m) and
+    // start again, without turning, whenever the position switches between tracker and phone.
+    final src = _trackerFresh;
+    if (_headAnchor == null || _headFromTracker != src) {
+      _headAnchor = p;
+      _headFromTracker = src;
+    } else if (RoutePlanner.meters(_headAnchor!, p) > 15) {
+      _heading = RoutePlanner.bearing(_headAnchor!, p);
+      _headAnchor = p;
+    }
 
     // Glide over about the time since the last new position (tracker ~5 s, phone ~1 s).
     final gap = DateTime.now().difference(_lastTarget).inMilliseconds.clamp(600, 5000);
@@ -300,7 +312,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     if (dh > 180) dh -= 360;
     final head = (_headFrom + dh * t) % 360;
     _shown.value = _Fix(pos, head);
-    if (_follow && _mapReady && !_listMode) _map.moveAndRotate(pos, _map.camera.zoom, -head);
+    if (_follow && _mapReady && !_listMode) _map.move(pos, _map.camera.zoom);
   }
 
   // ---------------------------------------------------------------------------------------- stops
@@ -377,7 +389,17 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
   void _checkArrival(LatLng p) {
     final w = _shift;
     if (w == null) return;
-    final stops = _stops(w).where((s) => s.state == _St.todo && s.point != null).toList();
+    final all = _stops(w);
+    final homesLeft = all.any((s) => !s.school && s.state == _St.todo);
+    final schoolLeft = all.any((s) => s.school && s.state == _St.todo);
+    final stops = all.where((s) {
+      if (s.state != _St.todo || s.point == null) return false;
+      // Morning: driving past the school with homes still to visit is not arriving there.
+      if (w.isMorning && s.school && homesLeft) return false;
+      // Evening: the homes come only after boarding at school.
+      if (!w.isMorning && !s.school && schoolLeft) return false;
+      return true;
+    }).toList();
     _Stop? hit;
     var best = _arriveM;
     for (final s in stops) {
@@ -614,6 +636,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
           if (!mounted || _listMode) return;
           _map.fitCamera(CameraFit.coordinates(
             coordinates: pts,
+            maxZoom: 17,
             padding: EdgeInsets.fromLTRB(40, 70, 70, MediaQuery.of(context).size.height * 0.25),
           ));
         });
@@ -625,6 +648,12 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
         options: MapOptions(
           initialCenter: center,
           initialZoom: 16,
+          // The map has street detail up to zoom 15 and is drawn larger up to 18; closer than
+          // that it would go blank, and Qatar fits in zoom 8.
+          minZoom: 8,
+          maxZoom: 18,
+          // North always up: no two-finger rotating, which left the map turned with no way back.
+          interactionOptions: const InteractionOptions(flags: InteractiveFlag.all & ~InteractiveFlag.rotate),
           onMapReady: () => setState(() => _mapReady = true),
           onPositionChanged: (camera, hasGesture) {
             if (hasGesture && _follow) setState(() => _follow = false);
@@ -716,7 +745,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
           _fab(_follow ? Icons.navigation_rounded : Icons.navigation_outlined, _follow ? 'Following the bus' : 'Follow the bus', () {
             setState(() => _follow = true);
             final f = _shown.value;
-            if (f != null && _mapReady) _map.moveAndRotate(f.pos, math.max(_map.camera.zoom, 16), -f.heading);
+            if (f != null && _mapReady) _map.moveAndRotate(f.pos, math.max(_map.camera.zoom, 16), 0);
           }, on: _follow),
           const SizedBox(height: 10),
           _fab(Icons.format_list_numbered_rounded, 'All stops', () {
@@ -835,11 +864,18 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     );
   }
 
-  /// Stops in the planned order: the planned ones first, then any not planned (no location).
-  List<_Stop> _ordered(List<_Stop> stops) => [
-        for (final k in _planKeys) ...stops.where((s) => s.key == k),
-        ...stops.where((s) => !_planKeys.contains(s.key)),
-      ];
+  /// Stops in the planned order: the planned ones first, then any not planned yet (just added, or
+  /// no location). The school stays where the trip has it - last in the morning, first in the
+  /// evening - so a newly added home never lands after it.
+  List<_Stop> _ordered(List<_Stop> stops) {
+    final homes = [
+      for (final k in _planKeys) ...stops.where((s) => s.key == k && !s.school),
+      ...stops.where((s) => !_planKeys.contains(s.key) && !s.school),
+    ];
+    final school = stops.where((s) => s.school).toList();
+    final morning = _shift?.isMorning ?? true;
+    return morning ? [...homes, ...school] : [...school, ...homes];
+  }
 
   Widget _stopCard(_Stop s, ShiftWindow w, bool isNext, Map<String, DateTime> etas) {
     final actions = MonitorActions(context, store);
