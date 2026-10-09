@@ -86,6 +86,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   String _routedSig = '';         // which trip the line was drawn for
   String _targetLabel = 'to your stop';
   String _locSource = ''; // tracker | monitor - a switch re-draws the line at once
+  int? _stopsBefore; // full-route view: stops the bus makes before this parent's (school setting)
 
   @override
   void initState() {
@@ -296,11 +297,34 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           _animateBusTo(_onRoad(busPos));
         }
 
+        // The school shows parents the bus's full route (App Module Settings -> Parent map): the
+        // server sends the line through every stop still to make - no other family's details - and
+        // this parent's own arrival time, counting the stops before theirs. Drawn as it comes.
+        final rt = res['route'];
+        if (rt is Map && rt['line'] is List && (rt['line'] as List).length > 1) {
+          final line = [
+            for (final p in rt['line'] as List)
+              if (p is List && p.length >= 2) LatLng((p[0] as num).toDouble(), (p[1] as num).toDouble()),
+          ];
+          final eta = (rt['eta_sec'] as num?)?.toInt() ?? 0;
+          final sb = rt['stops_before'];
+          setState(() {
+            _roadPolyline = line;
+            _etaMinutes = eta <= 0 ? 0 : (eta / 60).ceil();
+            _roadDistanceKm = ((rt['distance_m'] as num?)?.toDouble() ?? 0) / 1000.0;
+            _targetLabel = rt['target'] == 'school' ? 'to school' : 'to your stop';
+            _stopsBefore = sb is num ? sb.toInt() : null;
+          });
+          _routedSig = 'server'; // switching back to the direct view re-draws at once
+        } else {
+          _stopsBefore = null;
+        }
+
         // The road line: where the bus is going for this child. Re-drawn at once when the trip
         // changes (picked up, dropped) or the position switches between tracker and monitor phone;
         // within 3 s when the bus is off the line (another road, or a setting changed on the
         // portal); and every 15 s once the bus has moved ~45 m.
-        if (_busLocation != null) {
+        if (_busLocation != null && rt is! Map) {
           final now = DateTime.now();
           final sig = '$_currentShift|$_childStage|$_locSource';
           final sinceLast = _lastRouteFetchTime == null ? 1 << 30 : now.difference(_lastRouteFetchTime!).inSeconds;
@@ -1270,7 +1294,16 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                         Text(text, maxLines: 1, overflow: TextOverflow.ellipsis,
                             style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-                        Text(_currentShift == 'morning' ? 'Morning trip · home to school' : 'Evening trip · school to home',
+                        Text(
+                            [
+                              _currentShift == 'morning' ? 'Morning trip' : 'Evening trip',
+                              if (_stopsBefore != null && _travelling)
+                                _stopsBefore == 0
+                                    ? (_targetLabel == 'to school' ? 'school is next' : 'your stop is next')
+                                    : '$_stopsBefore stop${_stopsBefore == 1 ? '' : 's'} before ${_targetLabel == 'to school' ? 'school' : 'yours'}'
+                              else
+                                _currentShift == 'morning' ? 'home to school' : 'school to home',
+                            ].join(' · '),
                             style: const TextStyle(fontSize: 11, color: _muted)),
                       ]),
                     ),
