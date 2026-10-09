@@ -28,7 +28,7 @@ class MonitorDashboard extends StatefulWidget {
   State<MonitorDashboard> createState() => _MonitorDashboardState();
 }
 
-class _MonitorDashboardState extends State<MonitorDashboard> {
+class _MonitorDashboardState extends State<MonitorDashboard> with WidgetsBindingObserver {
   late final MonitorStore _store = widget.store ?? MonitorStore();
   int _tab = 0;
   String? _shiftKey; // shift shown on the Attendance tab; follows the current shift until chosen
@@ -36,6 +36,7 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _store.addListener(_onStore);
     SharedPreferences.getInstance().then((p) {
       final name = p.getString('user_name');
@@ -46,15 +47,32 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _store.removeListener(_onStore);
     PhoneLocation.instance.stop();
     _store.dispose();
     super.dispose();
   }
 
+  // The phone's location is read and sent ONLY while the app is on screen: it stops the moment the
+  // app goes to the background or the phone locks, and starts again when the monitor comes back.
+  // No background location, so no background permission.
+  bool _onScreen = true;
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _onScreen = state == AppLifecycleState.resumed;
+    if (_onScreen) {
+      if (_store.loaded) PhoneLocation.instance.sync(_store);
+      _store.load(silent: true); // fresh roster after being away
+    } else {
+      PhoneLocation.instance.stop();
+    }
+  }
+
   void _onStore() {
     // While a shift is open: the phone's position for the map, and the bus's backup position for parents.
-    if (_store.loaded) PhoneLocation.instance.sync(_store);
+    if (_store.loaded && _onScreen) PhoneLocation.instance.sync(_store);
     if (_store.unauthorized) {
       _store.unauthorized = false;
       _logout();
