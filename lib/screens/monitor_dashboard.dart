@@ -10,6 +10,7 @@ import 'login_screen.dart';
 import 'monitor/monitor_actions.dart';
 import 'monitor/monitor_home.dart';
 import 'monitor/monitor_profile.dart';
+import 'monitor/monitor_route_view.dart';
 import 'monitor/monitor_shift_view.dart';
 import 'monitor/monitor_store.dart';
 import 'terms_screen.dart';
@@ -59,7 +60,7 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
 
   void _openShift(String key) => setState(() {
         _shiftKey = key;
-        _tab = 1;
+        _tab = 2; // Attendance
       });
 
   Future<void> _logout() async {
@@ -161,6 +162,7 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
 
   static const _destinations = [
     (Icons.home_outlined, Icons.home_rounded, 'Home'),
+    (Icons.map_outlined, Icons.map_rounded, 'Route'),
     (Icons.fact_check_outlined, Icons.fact_check_rounded, 'Attendance'),
     (Icons.campaign_outlined, Icons.campaign_rounded, 'Notices'),
     (Icons.person_outline_rounded, Icons.person_rounded, 'Profile'),
@@ -181,6 +183,8 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
             index: _tab,
             children: [
               MonitorHome(store: _store, onOpenShift: _openShift, onCall: actions.call),
+              // GPS runs only while this tab is the one showing.
+              MonitorRouteView(store: _store, active: _tab == 1),
               MonitorShiftView(
                 store: _store,
                 shiftKey: shiftKey,
@@ -243,6 +247,10 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
                     backgroundColor: Colors.white,
                     indicatorColor: MonitorColors.navy.withValues(alpha: 0.12),
                     height: 66,
+                    // Five tabs on a narrow phone: labels only under the selected one, so none wrap.
+                    labelBehavior: box.maxWidth < 380
+                        ? NavigationDestinationLabelBehavior.onlyShowSelected
+                        : NavigationDestinationLabelBehavior.alwaysShow,
                     destinations: [
                       for (final (icon, sel, label) in _destinations)
                         NavigationDestination(icon: Icon(icon), selectedIcon: Icon(sel), label: label),

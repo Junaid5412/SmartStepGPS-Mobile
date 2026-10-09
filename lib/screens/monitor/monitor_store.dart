@@ -144,6 +144,12 @@ class MonitorStore extends ChangeNotifier {
   String driverName = 'Not Assigned';
   String driverPhone = '';
 
+  /// The bus tracker (for the Route page when the phone has no GPS) and where the school is.
+  int busDeviceId = 0;
+  String schoolName = 'School';
+  double? schoolLat;
+  double? schoolLng;
+
   ShiftWindow? morning;
   ShiftWindow? evening;
 
@@ -196,6 +202,12 @@ class MonitorStore extends ChangeNotifier {
       if (r['success'] == true) {
         final now = DateTime.now();
         students = (r['data'] as List?) ?? [];
+        final sch = r['school'];
+        if (sch is Map) {
+          schoolName = '${sch['name'] ?? 'School'}';
+          schoolLat = double.tryParse('${sch['lat'] ?? ''}');
+          schoolLng = double.tryParse('${sch['lng'] ?? ''}');
+        }
         upcoming = [
           for (final n in (r['upcoming_notices'] as List?) ?? const [])
             if (n is Map) Map<String, dynamic>.from(n),
@@ -207,6 +219,7 @@ class MonitorStore extends ChangeNotifier {
           busName = s['bus_name']?.toString() ?? busName;
           driverName = s['driver_name']?.toString() ?? driverName;
           driverPhone = s['driver_phone']?.toString() ?? driverPhone;
+          busDeviceId = int.tryParse('${s['bus_device_id'] ?? 0}') ?? 0;
         }
         final sh = r['shifts'];
         if (sh is Map && sh['morning'] is Map && sh['afternoon'] is Map) {
