@@ -104,6 +104,57 @@ class RoutePlanner {
     return RoutePlan(order, line, legM, legS, true);
   }
 
+  /// The road route through [pts] in exactly this order (OSRM "route"): the line along the roads and
+  /// each leg's metres and seconds. Null when the service does not answer. Used once the order is
+  /// known, so the whole way - from the bus to the next stop, and on - follows the roads.
+  static Future<RoutePlan?> roadPath(List<LatLng> pts) async {
+    if (pts.length < 2 || pts.length > _maxRoadStops + 2) return null;
+    try {
+      final coords = pts.map((p) => '${p.longitude.toStringAsFixed(6)},${p.latitude.toStringAsFixed(6)}').join(';');
+      final uri = Uri.parse('$_base/route/v1/driving/$coords?overview=full&geometries=geojson');
+      final r = await http.get(uri, headers: {'User-Agent': 'SmartStepSchoolBus/1.1 (school transport app)'}).timeout(_timeout);
+      if (r.statusCode != 200) return null;
+      final data = jsonDecode(r.body);
+      if (data is! Map || data['code'] != 'Ok') return null;
+      final routes = data['routes'] as List?;
+      if (routes == null || routes.isEmpty) return null;
+      final route = routes[0];
+      final legs = (route['legs'] as List?) ?? const [];
+      if (legs.length != pts.length - 1) return null;
+      return RoutePlan(
+        List<int>.generate(pts.length - 1, (i) => i),
+        [
+          for (final c in (route['geometry']?['coordinates'] as List? ?? const []))
+            LatLng((c[1] as num).toDouble(), (c[0] as num).toDouble()),
+        ],
+        [for (final l in legs) ((l['distance'] as num?) ?? 0).toDouble()],
+        [for (final l in legs) ((l['duration'] as num?) ?? 0).toDouble()],
+        true,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// The part of [line] still ahead of [at]: everything before the point of the line nearest to the
+  /// bus is cut off, and the line starts at the bus. Only the first stretch is searched, so a route
+  /// that later passes the same place again is not cut short.
+  static List<LatLng> ahead(List<LatLng> line, LatLng at) {
+    if (line.length < 3) return line;
+    final searchTo = math.min(line.length - 1, math.max(40, line.length ~/ 3));
+    var best = 0;
+    var bestD = double.infinity;
+    for (var i = 0; i < searchTo; i++) {
+      final d = meters(line[i], at);
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+    if (bestD > 250) return line; // the bus is off the planned line - keep it until the next re-plan
+    return [at, ...line.sublist(best + 1)];
+  }
+
   /// On-phone plan: nearest stop next, then 2-opt to untangle crossings. Good to a few percent on
   /// school-bus sized routes, instant, and works with no signal.
   static RoutePlan local(LatLng start, List<LatLng> stops, {LatLng? end}) {

@@ -106,6 +106,8 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
   RoutePlan? _plan;
   List<String> _planKeys = [];
   final Map<String, double> _legSec = {}; // road time to each stop from the one before it
+  double _leadStraight = 0; // straight-line metres from the bus to the next stop when planned
+  List<LatLng>? _lineNow; // the planned line, with the part already driven cut off
   String _planSig = '';
   DateTime _planAt = DateTime.fromMillisecondsSinceEpoch(0);
   LatLng? _planFrom;
@@ -281,7 +283,12 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
 
     _checkArrival(p);
     _maybePlan();
-    if (prev == null) setState(() {});
+    final plan = _plan;
+    if (plan != null && plan.line.length > 2) {
+      setState(() => _lineNow = RoutePlanner.ahead(plan.line, p));
+    } else if (prev == null) {
+      setState(() {});
+    }
   }
 
   void _onGlide() {
@@ -415,7 +422,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     final changed = sig != _planSig;
     final drifting = age > const Duration(seconds: 60) && moved > 300;
     if (!changed && !drifting) return;
-    if (_planSig.isNotEmpty && age < const Duration(seconds: 15)) return;
+    if (_planSig.isNotEmpty && age < Duration(seconds: changed ? 3 : 15)) return;
 
     _planning = true;
     try {
@@ -429,13 +436,35 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
       final plan = await RoutePlanner.plan(from, [for (final s in rest) s.point!], end: end?.point);
       if (!mounted) return;
       final keys = [...lead.map((s) => s.key), for (final i in plan.order) rest[i].key, if (end != null) end.key];
+      final byKey = {for (final s in todo) s.key: s};
+      final ordered = [for (final k in keys) byKey[k]!.point!];
+
+      // The whole way along the roads - from the bus to the next stop, and on through the rest. The
+      // order above only says WHICH stop comes next; drawing just the stops after the next one by
+      // road left the most important leg, bus -> next stop, as a straight line across the map.
+      final full = await RoutePlanner.roadPath([start, ...ordered]);
+      if (!mounted) return;
       _legSec.clear();
-      for (var i = 0; i < plan.order.length && i < plan.legSeconds.length; i++) {
-        _legSec[rest[plan.order[i]].key] = plan.legSeconds[i];
+      List<LatLng> line;
+      bool road;
+      if (full != null) {
+        for (var i = 0; i < keys.length && i < full.legSeconds.length; i++) {
+          _legSec[keys[i]] = full.legSeconds[i];
+        }
+        line = full.line;
+        road = true;
+      } else {
+        for (var i = 0; i < plan.order.length && i < plan.legSeconds.length; i++) {
+          _legSec[rest[plan.order[i]].key] = plan.legSeconds[i];
+        }
+        if (end != null && plan.legSeconds.length > plan.order.length) _legSec[end.key] = plan.legSeconds[plan.order.length];
+        line = [start, for (final s in lead) s.point!, ...plan.line];
+        road = false;
       }
-      if (end != null && plan.legSeconds.length > plan.order.length) _legSec[end.key] = plan.legSeconds[plan.order.length];
+      _leadStraight = ordered.isEmpty ? 0 : RoutePlanner.meters(start, ordered.first);
       setState(() {
-        _plan = RoutePlan(plan.order, [start, for (final s in lead) s.point!, ...plan.line], plan.legMeters, plan.legSeconds, plan.road);
+        _plan = RoutePlan(plan.order, line, plan.legMeters, plan.legSeconds, road);
+        _lineNow = RoutePlanner.ahead(line, start);
         _planKeys = keys;
         _planSig = sig;
         _planAt = DateTime.now();
@@ -468,7 +497,16 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     for (final k in _planKeys) {
       final s = byKey[k];
       if (s == null) continue;
-      final secs = first || _legSec[k] == null ? RoutePlanner.meters(prev, s.point!) * 1.3 / _mps : _legSec[k]!;
+      final straight = RoutePlanner.meters(prev, s.point!);
+      final double secs;
+      if (first && _legSec[k] != null && _leadStraight > 50) {
+        // The road time to the next stop when planned, shrinking as the bus closes in.
+        secs = _legSec[k]! * (straight / _leadStraight).clamp(0.0, 1.5);
+      } else if (!first && _legSec[k] != null) {
+        secs = _legSec[k]!;
+      } else {
+        secs = straight * 1.3 / _mps;
+      }
       t = t.add(Duration(seconds: secs.round()));
       out[k] = t;
       t = t.add(const Duration(seconds: _dwellSec));
@@ -594,9 +632,9 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
         ),
         children: [
           _tiles ?? const ColoredBox(color: Color(0xFFF2F0EB), child: SizedBox.expand()),
-          if (_plan != null && _plan!.line.length > 1)
+          if (_plan != null && (_lineNow ?? _plan!.line).length > 1)
             PolylineLayer(polylines: [
-              Polyline(points: _plan!.line, strokeWidth: 6, color: w.color.withValues(alpha: 0.85), borderStrokeWidth: 2, borderColor: Colors.white),
+              Polyline(points: _lineNow ?? _plan!.line, strokeWidth: 6, color: w.color.withValues(alpha: 0.85), borderStrokeWidth: 2, borderColor: Colors.white),
             ]),
           MarkerLayer(markers: [
             for (final s in stops)
