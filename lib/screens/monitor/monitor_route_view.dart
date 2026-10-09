@@ -265,8 +265,8 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
 
   String get _sourceLabel {
     if (_trackerFresh) return 'Bus tracker · live';
-    if (_phoneFresh) return 'Tracker offline · using your phone';
-    if (_busPos != null) return 'Tracker last seen ${_busAt == null ? '' : DateFormat('h:mm a').format(_busAt!)}';
+    if (_phoneFresh) return 'Your phone GPS';
+    if (_busPos != null) return 'Tracker seen ${_busAt == null ? '' : DateFormat('h:mm a').format(_busAt!)}';
     return 'Finding the bus…';
   }
 
@@ -421,7 +421,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     _say('Arrived at ${hit.title}.');
     _planSig = '';
     if (!_listMode && _sheet.isAttached && _sheet.size < 0.3) {
-      _sheet.animateTo(0.48, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+      _sheet.animateTo(0.34, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
     }
   }
 
@@ -597,7 +597,8 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
           bottom: false,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 12, 10),
-            child: Row(children: [
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+             Row(children: [
               Icon(w.icon, color: Colors.amberAccent, size: 20),
               const SizedBox(width: 8),
               Expanded(
@@ -615,6 +616,17 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
                   _modeBtn(Icons.view_list_rounded, 'List', _listMode, () => _setMode(true), w),
                 ]),
               ),
+             ]),
+             const SizedBox(height: 8),
+             ClipRRect(
+               borderRadius: BorderRadius.circular(4),
+               child: LinearProgressIndicator(
+                 value: homes == 0 ? 0 : done / homes,
+                 minHeight: 5,
+                 backgroundColor: Colors.white.withValues(alpha: 0.2),
+                 valueColor: const AlwaysStoppedAnimation(Colors.amberAccent),
+               ),
+             ),
             ]),
           ),
         ),
@@ -743,8 +755,8 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
             const SizedBox(width: 6),
             Flexible(child: Text(_sourceLabel, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700))),
             if (_plan != null && !_plan!.road) ...[
-              const SizedBox(width: 8),
-              const Text('· estimated route', style: TextStyle(fontSize: 11.5, color: MonitorColors.muted)),
+              const SizedBox(width: 6),
+              const Text('· est. route', style: TextStyle(fontSize: 11, color: MonitorColors.muted)),
             ],
           ])),
         ),
@@ -760,7 +772,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
           }, on: _follow),
           const SizedBox(height: 10),
           _fab(Icons.format_list_numbered_rounded, 'All stops', () {
-            if (_sheet.isAttached) _sheet.animateTo(0.85, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+            if (_sheet.isAttached) _sheet.animateTo(0.88, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
           }),
         ]),
       ),
@@ -777,15 +789,15 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
         ),
       DraggableScrollableSheet(
         controller: _sheet,
-        initialChildSize: 0.22,
+        initialChildSize: 0.34,
         minChildSize: 0.14,
         maxChildSize: 0.88,
         snap: true,
-        snapSizes: const [0.22, 0.48],
+        snapSizes: const [0.34, 0.6],
         builder: (context, scroll) => DecoratedBox(
           decoration: const BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
             boxShadow: [BoxShadow(color: Color(0x22000000), blurRadius: 16, offset: Offset(0, -2))],
           ),
           child: ListView(
@@ -796,14 +808,13 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
               const SizedBox(height: 8),
               if (next == null) _allDone(w) else ...[
                 _stopHeader(next, w, etas),
-                const SizedBox(height: 8),
-                _chips(next, w),
-                const SizedBox(height: 12),
-                _stopTools(next),
-                const Divider(height: 24, color: MonitorColors.line),
+                const SizedBox(height: 10),
                 ..._kidRows(next, w),
+                _bulk(next, w),
+                const SizedBox(height: 10),
+                _stopTools(next),
               ],
-              const SizedBox(height: 14),
+              const Divider(height: 28, color: MonitorColors.line),
               const SectionTitle('All stops'),
               const SizedBox(height: 6),
               ..._compactStops(stops, next, w, etas),
@@ -832,15 +843,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
         children: [
           PageWidth(
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: Row(children: [
-                  Icon(_trackerFresh ? Icons.directions_bus_rounded : Icons.smartphone_rounded, size: 15,
-                      color: _trackerFresh ? MonitorColors.green : MonitorColors.amber),
-                  const SizedBox(width: 6),
-                  Expanded(child: Text(_sourceLabel, style: const TextStyle(fontSize: 12, color: MonitorColors.muted, fontWeight: FontWeight.w600))),
-                ]),
-              ),
+              Padding(padding: const EdgeInsets.only(bottom: 12), child: _summary(w, stops, etas)),
               if (next == null) Padding(padding: const EdgeInsets.only(bottom: 12), child: SurfaceCard(child: _allDone(w))),
               for (final s in todo)
                 Padding(padding: const EdgeInsets.only(bottom: 12), child: _stopCard(s, w, next?.key == s.key, etas)),
@@ -1008,33 +1011,44 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     });
     _say('${s.title} is next.');
     _maybePlan();
-    if (!_listMode && _sheet.isAttached) _sheet.animateTo(0.48, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+    if (!_listMode && _sheet.isAttached) _sheet.animateTo(0.6, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
   }
 
   Widget _stopHeader(_Stop s, ShiftWindow w, Map<String, DateTime> etas) {
     final idx = _planKeys.indexOf(s.key);
     final reach = _reach(etas, s);
-    return Row(children: [
-      Container(
-        width: 32,
-        height: 32,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(color: w.color, shape: BoxShape.circle),
-        child: s.school
-            ? const Icon(Icons.school_rounded, size: 17, color: Colors.white)
-            : Text(idx >= 0 ? '${idx + 1}' : '•', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
-      ),
-      const SizedBox(width: 10),
-      Expanded(
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(s.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-          Text(s.subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, color: MonitorColors.muted)),
-        ]),
-      ),
-      const SizedBox(width: 8),
-      Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-        if (reach.isNotEmpty) Text(reach, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: w.color)),
-        Text(_away(s), style: const TextStyle(fontSize: 12, color: MonitorColors.muted)),
+    final total = _planKeys.length;
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Row(children: [
+        Text(s.school ? 'NEXT · SCHOOL' : 'NEXT STOP${idx >= 0 && total > 1 ? '  ·  $total stops left' : ''}',
+            style: TextStyle(color: w.color, fontSize: 10.5, fontWeight: FontWeight.w800, letterSpacing: .6)),
+        const Spacer(),
+        if (reach.isNotEmpty)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(color: w.color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(20)),
+            child: Text(reach, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: w.color)),
+          ),
+      ]),
+      const SizedBox(height: 8),
+      Row(children: [
+        Container(
+          width: 38,
+          height: 38,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(color: w.color, shape: BoxShape.circle),
+          child: s.school
+              ? const Icon(Icons.school_rounded, size: 19, color: Colors.white)
+              : Text(idx >= 0 ? '${idx + 1}' : '•', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15)),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(s.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, height: 1.2)),
+            Text([s.subtitle, _away(s)].where((t) => t.isNotEmpty).join('  ·  '), maxLines: 2, overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12, color: MonitorColors.muted)),
+          ]),
+        ),
       ]),
     ]);
   }
@@ -1083,58 +1097,19 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     );
   }
 
-  Widget _chips(_Stop s, ShiftWindow w) {
-    final actions = MonitorActions(context, store);
-    if (s.kids.isEmpty) return const Text('Nobody to mark here.', style: TextStyle(color: MonitorColors.muted));
-    final main = _mainKids(s, w);
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(children: [
-        for (final k in s.kids)
-          Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: Builder(builder: (_) {
-              final a = _action(k, s, w);
-              final first = '${k['name'] ?? ''}'.split(' ').first;
-              if (a == null) {
-                final ev = store.eventOf(k, w.key);
-                return StatusPill(text: '$first · ${StatusStyle.label(ev, w.key)}', color: StatusStyle.color(ev), icon: StatusStyle.icon(ev));
-              }
-              return ActionChip(
-                onPressed: () => actions.mark(w, k, a.$2),
-                backgroundColor: a.$3,
-                side: BorderSide.none,
-                shape: const StadiumBorder(),
-                avatar: const Icon(Icons.check_rounded, size: 16, color: Colors.white),
-                label: Text(a.$2 == 'leave' || a.$2 == 'by_parent' ? '$first · leave' : first,
-                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
-              );
-            }),
-          ),
-        if (main.length >= 2)
-          ActionChip(
-            onPressed: () => actions.markMany(w, main, _mainType(s, w), _mainTitle(s, w)),
-            backgroundColor: MonitorColors.green,
-            side: BorderSide.none,
-            shape: const StadiumBorder(),
-            avatar: const Icon(Icons.done_all_rounded, size: 16, color: Colors.white),
-            label: Text('All ${main.length}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
-          ),
-      ]),
-    );
-  }
-
   Widget _stopTools(_Stop s) {
     final actions = MonitorActions(context, store);
     final f = s.family;
     Widget tool(IconData i, String t, VoidCallback? onTap) => Expanded(
-          child: OutlinedButton.icon(
+          child: TextButton.icon(
             onPressed: onTap,
             icon: Icon(i, size: 17),
-            label: Text(t, maxLines: 1, overflow: TextOverflow.ellipsis),
-            style: OutlinedButton.styleFrom(
+            label: Text(t, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+            style: TextButton.styleFrom(
               foregroundColor: MonitorColors.navy,
-              side: const BorderSide(color: MonitorColors.line),
+              backgroundColor: const Color(0xFFF1F5F9),
+              disabledForegroundColor: const Color(0xFFCBD5E1),
+              minimumSize: const Size(0, 40),
               padding: const EdgeInsets.symmetric(horizontal: 6),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             ),
@@ -1158,45 +1133,98 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
 
   List<Widget> _kidRows(_Stop s, ShiftWindow w) {
     final actions = MonitorActions(context, store);
+    Widget buttons(dynamic k) {
+      final a = _action(k, s, w);
+      if (a == null) return Icon(StatusStyle.icon(store.eventOf(k, w.key)), color: StatusStyle.color(store.eventOf(k, w.key)));
+      final small = ButtonStyle(
+        visualDensity: VisualDensity.compact,
+        minimumSize: const WidgetStatePropertyAll(Size(0, 36)),
+        padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 14)),
+        shape: WidgetStatePropertyAll(RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+      );
+      return Row(mainAxisSize: MainAxisSize.min, children: [
+        FilledButton(
+          onPressed: () => actions.mark(w, k, a.$2),
+          style: small.merge(FilledButton.styleFrom(backgroundColor: a.$3)),
+          child: Text(a.$1, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+        ),
+        if (a.$2 == 'pickup') ...[
+          const SizedBox(width: 6),
+          OutlinedButton(
+            onPressed: () => actions.notTravelling(w, k),
+            style: small.merge(OutlinedButton.styleFrom(foregroundColor: const Color(0xFF475569), side: const BorderSide(color: MonitorColors.line))),
+            child: const Text('Absent', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+          ),
+        ],
+      ]);
+    }
+
+    Widget who(dynamic k) => Row(children: [
+          Initials(name: '${k['name'] ?? '?'}', size: 32, color: w.color),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('${k['name'] ?? 'Student'}', maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, height: 1.2)),
+              if (store.noticeFor(k, w.key) != null)
+                Text('Leave: ${store.noticeOf(k)?['summary'] ?? ''}', maxLines: 2, overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12, color: MonitorColors.byParent, fontWeight: FontWeight.w600))
+              else
+                Text(StatusStyle.label(store.eventOf(k, w.key), w.key), style: const TextStyle(fontSize: 12, color: MonitorColors.muted)),
+            ]),
+          ),
+        ]);
+
     return [
       for (final k in s.kids)
         Padding(
           padding: const EdgeInsets.only(bottom: 8, right: 6),
-          child: Row(children: [
-            Initials(name: '${k['name'] ?? '?'}', size: 34, color: w.color),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('${k['name'] ?? 'Student'}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)),
-                if (store.noticeFor(k, w.key) != null)
-                  Text('Leave: ${store.noticeOf(k)?['summary'] ?? ''}', maxLines: 1, overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 12, color: MonitorColors.byParent, fontWeight: FontWeight.w600))
-                else
-                  Text(StatusStyle.label(store.eventOf(k, w.key), w.key), style: const TextStyle(fontSize: 12, color: MonitorColors.muted)),
-              ]),
-            ),
-            Builder(builder: (_) {
-              final a = _action(k, s, w);
-              if (a == null) return Icon(StatusStyle.icon(store.eventOf(k, w.key)), color: StatusStyle.color(store.eventOf(k, w.key)));
-              return Row(mainAxisSize: MainAxisSize.min, children: [
-                FilledButton(
-                  onPressed: () => actions.mark(w, k, a.$2),
-                  style: FilledButton.styleFrom(backgroundColor: a.$3, visualDensity: VisualDensity.compact),
-                  child: Text(a.$1),
-                ),
-                if (a.$2 == 'pickup') ...[
-                  const SizedBox(width: 6),
-                  OutlinedButton(
-                    onPressed: () => actions.notTravelling(w, k),
-                    style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, foregroundColor: const Color(0xFF475569)),
-                    child: const Text('Absent'),
-                  ),
-                ],
+          child: LayoutBuilder(builder: (context, c) {
+            final hasTwo = _action(k, s, w)?.$2 == 'pickup';
+            // Narrow: name on its own line, buttons under it - never "Muhamma…".
+            if (c.maxWidth < (hasTwo ? 360 : 300)) {
+              return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                who(k),
+                const SizedBox(height: 6),
+                Align(alignment: Alignment.centerRight, child: buttons(k)),
               ]);
-            }),
-          ]),
+            }
+            return Row(children: [Expanded(child: who(k)), const SizedBox(width: 8), buttons(k)]);
+          }),
         ),
     ];
+  }
+
+  /// The list's top card: how far the shift is, who is on the bus, and where the position comes from.
+  Widget _summary(ShiftWindow w, List<_Stop> stops, Map<String, DateTime> etas) {
+    final homes = stops.where((s) => !s.school && s.state != _St.leave).length;
+    final doneHomes = stops.where((s) => !s.school && s.state == _St.done).length;
+    final onBus = store.students.where((k) => store.stageOf(k, w.key) == Stage.onBus).length;
+    final school = stops.where((s) => s.school).firstOrNull;
+    final schoolAt = school == null ? null : etas[school.key];
+    Widget stat(String v, String l) => Expanded(
+          child: Column(children: [
+            Text(v, style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: w.color)),
+            Text(l, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11, color: MonitorColors.muted)),
+          ]),
+        );
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: MonitorColors.line)),
+      child: Column(children: [
+        Row(children: [
+          stat('$doneHomes/$homes', 'stops done'),
+          stat('$onBus', 'on the bus'),
+          stat(schoolAt == null ? '--' : DateFormat('h:mm').format(schoolAt), w.isMorning ? 'at school' : 'school left'),
+        ]),
+        const Divider(height: 18, color: MonitorColors.line),
+        Row(children: [
+          Icon(_trackerFresh ? Icons.directions_bus_rounded : Icons.smartphone_rounded, size: 15,
+              color: _trackerFresh ? MonitorColors.green : MonitorColors.amber),
+          const SizedBox(width: 6),
+          Expanded(child: Text(_sourceLabel, style: const TextStyle(fontSize: 12, color: MonitorColors.muted, fontWeight: FontWeight.w600))),
+        ]),
+      ]),
+    );
   }
 
   List<Widget> _compactStops(List<_Stop> stops, _Stop? next, ShiftWindow w, Map<String, DateTime> etas) => [

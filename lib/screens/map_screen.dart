@@ -56,7 +56,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   DateTime? _ageAt;   // when that was
   bool _full = false; // full-screen map
   bool? _cardOpenChoice; // trip card details: the parent's choice; until then open on taller screens
-  bool get _cardOpen => _cardOpenChoice ?? MediaQuery.of(context).size.height >= 720;
+  bool get _cardOpen => _cardOpenChoice ?? false; // small by default; a tap opens the details above
   String? _pickedAt, _droppedAt, _otherEvent; // this trip's times (HH:mm) and absent / leave / by_parent
   Map<String, dynamic>? _crew; // monitor and driver: names and phones
   double _busBearing = 0.0;   // heading in degrees (0=north, 90=east)
@@ -728,13 +728,14 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                         if (_schoolLocation != null)
                           Marker(
                             point: _schoolLocation!,
-                            width: 70,
-                            height: 70,
+                            width: 170,
+                            height: 96,
                             child: _buildMarkerItem(
                               icon: Icons.school_rounded,
                               iconColor: Colors.white,
                               bgColor: const Color(0xFF4A148C),
-                              label: _schoolName.length > 12 ? '${_schoolName.substring(0, 10)}..' : _schoolName,
+                              label: _schoolName,
+                              wide: true,
                             ),
                           ),
 
@@ -910,6 +911,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     required Color iconColor,
     required Color bgColor,
     required String label,
+    bool wide = false, // the school: its full name, up to two lines
   }) {
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -921,9 +923,12 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             borderRadius: BorderRadius.circular(6),
             boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 2))],
           ),
+          constraints: BoxConstraints(maxWidth: wide ? 160 : 90),
           child: Text(
             label,
-            style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: bgColor),
+            textAlign: TextAlign.center,
+            maxLines: wide ? 2 : 1,
+            style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: bgColor, height: 1.2),
             overflow: TextOverflow.ellipsis,
           ),
         ),
@@ -1189,146 +1194,141 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     final (text, color, icon) = _status;
     final eta = _travelling && _etaMinutes > 0 ? DateTime.now().add(Duration(minutes: _etaMinutes)) : null;
     final live = _positionLive;
+    void toggle() => setState(() => _cardOpenChoice = !_cardOpen);
 
     return Material(
       color: Colors.white,
-      elevation: 10,
+      elevation: 8,
       shadowColor: Colors.black38,
-      borderRadius: BorderRadius.circular(22),
+      borderRadius: BorderRadius.circular(18),
       child: AnimatedSize(
         duration: const Duration(milliseconds: 200),
-        alignment: Alignment.topCenter,
+        alignment: Alignment.bottomCenter,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
+          padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Handle - tap to show or hide the details.
+              // Handle, and the status row: a tap shows or hides the details (they open above).
               GestureDetector(
                 behavior: HitTestBehavior.opaque,
-                onTap: () => setState(() => _cardOpenChoice = !_cardOpen),
-                child: Center(
-                  child: Container(
-                    width: 40,
+                onTap: toggle,
+                child: Column(children: [
+                  Container(
+                    width: 34,
                     height: 4,
-                    margin: const EdgeInsets.only(bottom: 10),
+                    margin: const EdgeInsets.only(bottom: 8),
                     decoration: BoxDecoration(color: const Color(0xFFE2E8F0), borderRadius: BorderRadius.circular(4)),
                   ),
-                ),
-              ),
-
-              // Status and freshness.
-              Row(children: [
-                Container(
-                  width: 38,
-                  height: 38,
-                  decoration: BoxDecoration(color: color.withValues(alpha: 0.12), shape: BoxShape.circle),
-                  child: Icon(icon, color: color, size: 20),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text(text, maxLines: 2, overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-                    const SizedBox(height: 1),
-                    Text(_currentShift == 'morning' ? 'Morning trip · home to school' : 'Evening trip · school to home',
-                        style: const TextStyle(fontSize: 11.5, color: _muted)),
-                  ]),
-                ),
-                const SizedBox(width: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: live ? const Color(0xFFDCFCE7) : const Color(0xFFF1F5F9),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Container(width: 7, height: 7, decoration: BoxDecoration(color: live ? const Color(0xFF16A34A) : const Color(0xFF94A3B8), shape: BoxShape.circle)),
-                    const SizedBox(width: 5),
-                    Text(live ? 'Live' : _freshLabel.replaceFirst('Updated ', ''),
-                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: live ? _green : _muted)),
-                  ]),
-                ),
-              ]),
-
-              // Arrival, as a clock time.
-              if (eta != null) ...[
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(colors: [Color(0xFF1E3C72), Color(0xFF2A5298)]),
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Row(children: [
+                  Row(children: [
+                    Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(color: color.withValues(alpha: 0.12), shape: BoxShape.circle),
+                      child: Icon(icon, color: color, size: 17),
+                    ),
+                    const SizedBox(width: 9),
                     Expanded(
                       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Text(_targetLabel == 'to school' ? 'Reaches school at' : 'Arrives at your stop',
-                            style: const TextStyle(color: Colors.white70, fontSize: 11.5, fontWeight: FontWeight.w600)),
-                        const SizedBox(height: 2),
-                        Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                          Text('~${_clock(eta)}', style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w800, height: 1.1)),
-                          const SizedBox(width: 8),
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 2),
-                            child: Text('in $_etaMinutes min', style: const TextStyle(color: Colors.white70, fontSize: 12.5, fontWeight: FontWeight.w600)),
-                          ),
-                        ]),
+                        Text(text, maxLines: 1, overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
+                        Text(_currentShift == 'morning' ? 'Morning trip · home to school' : 'Evening trip · school to home',
+                            style: const TextStyle(fontSize: 11, color: _muted)),
                       ]),
                     ),
-                    Material(
-                      color: Colors.white,
-                      shape: const CircleBorder(),
-                      child: InkWell(
-                        customBorder: const CircleBorder(),
-                        onTap: _locateBus,
-                        child: const Padding(
-                          padding: EdgeInsets.all(10),
-                          child: Icon(Icons.my_location_rounded, color: _navy, size: 22),
-                        ),
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: live ? const Color(0xFFDCFCE7) : const Color(0xFFF1F5F9),
+                        borderRadius: BorderRadius.circular(20),
                       ),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Container(width: 6, height: 6, decoration: BoxDecoration(color: live ? const Color(0xFF16A34A) : const Color(0xFF94A3B8), shape: BoxShape.circle)),
+                        const SizedBox(width: 4),
+                        Text(live ? 'Live' : _freshLabel.replaceFirst('Updated ', ''),
+                            style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: live ? _green : _muted)),
+                      ]),
                     ),
+                    Icon(_cardOpen ? Icons.keyboard_arrow_down_rounded : Icons.keyboard_arrow_up_rounded, color: _muted, size: 22),
                   ]),
-                ),
-              ],
+                ]),
+              ),
 
+              // Details - above the arrival bar, so the card grows upwards.
               if (_cardOpen) ...[
-                const SizedBox(height: 14),
+                const SizedBox(height: 12),
                 _timeline(),
-                const SizedBox(height: 14),
+                const SizedBox(height: 10),
                 Row(children: [
                   _tile(Icons.speed_rounded, live ? '${_speed.toInt()} km/h' : '--', 'Speed'),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 6),
                   _tile(Icons.alt_route_rounded, _travelling && _roadDistanceKm > 0 ? '${_roadDistanceKm.toStringAsFixed(1)} km' : '--',
                       _travelling ? _targetLabel : 'Distance'),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 6),
                   _tile(Icons.update_rounded, live ? 'Live' : _freshLabel.replaceFirst('Updated ', '').replaceFirst('Last seen ', ''), 'Updated'),
                 ]),
                 ..._crewRow(),
-                if (eta == null) ...[
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    height: 42,
-                    child: OutlinedButton.icon(
-                      onPressed: _locateBus,
-                      icon: const Icon(Icons.my_location_rounded, size: 18),
-                      label: const Text('Locate bus', style: TextStyle(fontWeight: FontWeight.w700)),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: _navy,
-                        side: const BorderSide(color: Color(0xFFCBD5E1)),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ],
+
+              // Arrival, as a clock time - or a locate button when there is none.
+              const SizedBox(height: 10),
+              if (eta != null)
+                Container(
+                  padding: const EdgeInsets.fromLTRB(12, 7, 6, 7),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(colors: [Color(0xFF1E3C72), Color(0xFF2A5298)]),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Row(children: [
+                    const Icon(Icons.schedule_rounded, color: Colors.white70, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text.rich(
+                        TextSpan(children: [
+                          TextSpan(text: _targetLabel == 'to school' ? 'School at ' : 'Your stop at ',
+                              style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w600)),
+                          TextSpan(text: '~${_clock(eta)}', style: const TextStyle(color: Colors.white, fontSize: 16.5, fontWeight: FontWeight.w800)),
+                          TextSpan(text: '  ·  $_etaMinutes min', style: const TextStyle(color: Colors.white70, fontSize: 11.5, fontWeight: FontWeight.w600)),
+                        ]),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
+                    _roundButton(Icons.my_location_rounded, _locateBus, light: true),
+                  ]),
+                )
+              else
+                SizedBox(
+                  height: 38,
+                  child: OutlinedButton.icon(
+                    onPressed: _locateBus,
+                    icon: const Icon(Icons.my_location_rounded, size: 17),
+                    label: const Text('Locate bus', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: _navy,
+                      side: const BorderSide(color: Color(0xFFCBD5E1)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
                   ),
-                ],
-              ],
+                ),
             ],
           ),
         ),
       ),
     );
   }
+
+  Widget _roundButton(IconData icon, VoidCallback onTap, {bool light = false, Color color = _navy}) => Material(
+        color: light ? Colors.white : color.withValues(alpha: 0.1),
+        shape: const CircleBorder(),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onTap,
+          child: Padding(padding: const EdgeInsets.all(7), child: Icon(icon, color: color, size: 18)),
+        ),
+      );
 
   /// Three steps of the trip, with the times they happened.
   Widget _timeline() {
@@ -1344,14 +1344,14 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       final done = i < step || (i == step && _childStage == 'done');
       final current = i == step && !done;
       return Container(
-        width: 22,
-        height: 22,
+        width: 18,
+        height: 18,
         decoration: BoxDecoration(
           color: done ? _green : (current ? Colors.white : const Color(0xFFF1F5F9)),
           shape: BoxShape.circle,
           border: Border.all(color: done ? _green : (current ? _blue : const Color(0xFFCBD5E1)), width: current ? 3 : 2),
         ),
-        child: done ? const Icon(Icons.check_rounded, size: 14, color: Colors.white) : null,
+        child: done ? const Icon(Icons.check_rounded, size: 12, color: Colors.white) : null,
       );
     }
 
@@ -1363,8 +1363,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           child: Column(
             crossAxisAlignment: i == 0 ? CrossAxisAlignment.start : (i == 2 ? CrossAxisAlignment.end : CrossAxisAlignment.center),
             children: [
-              Text(labels[i], style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: i <= step ? const Color(0xFF0F172A) : _muted)),
-              if (times[i].isNotEmpty) Text(times[i], style: const TextStyle(fontSize: 10.5, color: _muted)),
+              Text(labels[i], style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: i <= step ? const Color(0xFF0F172A) : _muted)),
+              if (times[i].isNotEmpty) Text(times[i], style: const TextStyle(fontSize: 10, color: _muted)),
             ],
           ),
         );
@@ -1372,25 +1372,26 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     if (!_travelling && _otherEvent != null) return const SizedBox.shrink();
     return Column(children: [
       Row(children: [dot(0), bar(0), dot(1), bar(1), dot(2)]),
-      const SizedBox(height: 6),
+      const SizedBox(height: 5),
       Row(children: [label(0), label(1), label(2)]),
     ]);
   }
 
   Widget _tile(IconData icon, String value, String caption) => Expanded(
         child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 9, horizontal: 6),
-          decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE2E8F0))),
+          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+          decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(10), border: Border.all(color: const Color(0xFFE2E8F0))),
           child: Column(children: [
-            Icon(icon, size: 16, color: _navy),
-            const SizedBox(height: 3),
-            Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-            Text(caption, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10.5, color: _muted)),
+            Icon(icon, size: 14, color: _navy),
+            const SizedBox(height: 2),
+            Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
+            Text(caption, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10, color: _muted)),
           ]),
         ),
       );
 
-  /// The bus monitor and the driver, each with a call button.
+  /// Who the parent may call - as the school allows (App Module Settings): both side by side, or
+  /// one on a full-width row with a labelled Call button, or nobody.
   List<Widget> _crewRow() {
     final c = _crew;
     if (c == null) return const [];
@@ -1400,35 +1401,54 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       if (s('driver_name').isNotEmpty) ('Driver', s('driver_name'), s('driver_phone')),
     ];
     if (people.isEmpty) return const [];
-    return [
-      const SizedBox(height: 12),
-      Row(children: [
-        for (var i = 0; i < people.length; i++) ...[
-          if (i > 0) const SizedBox(width: 8),
-          Expanded(
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
-              decoration: BoxDecoration(borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE2E8F0))),
-              child: Row(children: [
-                Expanded(
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text(people[i].$1, style: const TextStyle(fontSize: 10.5, color: _muted)),
-                    Text(people[i].$2, maxLines: 1, overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: Color(0xFF0F172A))),
-                  ]),
-                ),
-                if (people[i].$3.isNotEmpty)
-                  IconButton(
-                    visualDensity: VisualDensity.compact,
-                    tooltip: 'Call',
-                    onPressed: () => _call(people[i].$3),
-                    icon: const Icon(Icons.call_rounded, color: _green, size: 20),
-                  ),
+
+    Widget who((String, String, String) p, {bool single = false}) => Container(
+          padding: EdgeInsets.fromLTRB(10, 5, single ? 6 : 2, 5),
+          decoration: BoxDecoration(borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE2E8F0))),
+          child: Row(children: [
+            if (single) ...[
+              Container(
+                width: 30,
+                height: 30,
+                decoration: const BoxDecoration(color: Color(0xFFEFF6FF), shape: BoxShape.circle),
+                child: const Icon(Icons.person_rounded, color: _navy, size: 17),
+              ),
+              const SizedBox(width: 8),
+            ],
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(p.$1, style: const TextStyle(fontSize: 10, color: _muted)),
+                Text(p.$2, maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF0F172A))),
               ]),
             ),
-          ),
-        ],
-      ]),
+            if (p.$3.isNotEmpty)
+              single
+                  ? FilledButton.icon(
+                      onPressed: () => _call(p.$3),
+                      icon: const Icon(Icons.call_rounded, size: 16),
+                      label: const Text('Call', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: _green,
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                    )
+                  : _roundButton(Icons.call_rounded, () => _call(p.$3), color: _green),
+          ]),
+        );
+
+    return [
+      const SizedBox(height: 8),
+      if (people.length == 1)
+        who(people.first, single: true)
+      else
+        Row(children: [
+          Expanded(child: who(people[0])),
+          const SizedBox(width: 6),
+          Expanded(child: who(people[1])),
+        ]),
     ];
   }
 
