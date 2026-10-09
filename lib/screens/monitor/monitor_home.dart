@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'monitor_notices_screen.dart';
 import 'monitor_store.dart';
 import 'monitor_widgets.dart';
 
@@ -37,10 +38,8 @@ class MonitorHome extends StatelessWidget {
                   children: [
                     if (store.error != null && !store.loaded) ErrorNote(text: store.error!, onRetry: store.load),
                     if (focus != null) _hero(context, focus),
-                    if (store.noticedStudents.isNotEmpty) ...[
-                      const SizedBox(height: 14),
-                      _notices(),
-                    ],
+                    const SizedBox(height: 14),
+                    _notices(context),
                     const SizedBox(height: 18),
                     const SectionTitle('Today\'s shifts'),
                     const SizedBox(height: 10),
@@ -266,12 +265,36 @@ class MonitorHome extends StatelessWidget {
     );
   }
 
-  /// Today's "Not on Bus" notices from parents, so the monitor knows before setting off.
-  Widget _notices() {
-    final list = store.noticedStudents;
+  /// "Not on Bus": what parents have told the bus - today, and the coming days - so the monitor
+  /// knows before she sets off. Always shown, so she always knows where to look.
+  Widget _notices(BuildContext context) {
+    final today = store.noticedStudents;
+    final later = store.upcoming;
+    Widget line(String name, String summary) => Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text.rich(
+            TextSpan(children: [
+              TextSpan(text: '$name  ', style: const TextStyle(fontWeight: FontWeight.w700, color: MonitorColors.ink)),
+              TextSpan(text: summary, style: const TextStyle(color: MonitorColors.muted)),
+            ]),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 13),
+          ),
+        );
+    String day(String ymd) {
+      final d = DateTime.tryParse(ymd);
+      if (d == null) return ymd;
+      final now = DateTime.now();
+      final diff = DateTime(d.year, d.month, d.day).difference(DateTime(now.year, now.month, now.day)).inDays;
+      if (diff == 1) return 'Tomorrow';
+      const names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+      return '${names[d.weekday - 1]} ${d.day}/${d.month}';
+    }
+
     return SurfaceCard(
-      onTap: store.focus == null ? null : () => onOpenShift(store.focus!.key),
-      borderColor: MonitorColors.byParent.withValues(alpha: 0.4),
+      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => MonitorNoticesScreen(store: store))),
+      borderColor: (today.isNotEmpty || later.isNotEmpty) ? MonitorColors.byParent.withValues(alpha: 0.4) : null,
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -279,31 +302,35 @@ class MonitorHome extends StatelessWidget {
           Row(children: [
             const IconTile(icon: Icons.no_transfer_rounded, color: MonitorColors.byParent, size: 34),
             const SizedBox(width: 10),
-            Expanded(
-              child: Text('Not on Bus today (${list.length})',
-                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: MonitorColors.ink)),
+            const Expanded(
+              child: Text('Not on Bus',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: MonitorColors.ink)),
             ),
+            if (today.isNotEmpty) StatusPill(text: 'Today ${today.length}', color: MonitorColors.byParent),
+            if (later.isNotEmpty) ...[
+              const SizedBox(width: 6),
+              StatusPill(text: 'Coming ${later.length}', color: MonitorColors.muted),
+            ],
             const Icon(Icons.chevron_right_rounded, color: MonitorColors.muted),
           ]),
-          const SizedBox(height: 8),
-          for (final s in list.take(4))
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text.rich(
-                TextSpan(children: [
-                  TextSpan(text: '${s['name'] ?? 'Student'}  ', style: const TextStyle(fontWeight: FontWeight.w700, color: MonitorColors.ink)),
-                  TextSpan(text: '${(s['notice'] as Map)['summary'] ?? ''}', style: const TextStyle(color: MonitorColors.muted)),
-                ]),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 13),
-              ),
+          if (today.isEmpty && later.isEmpty)
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Text('No notices from parents. Every child rides as usual.',
+                  style: TextStyle(fontSize: 13, color: MonitorColors.muted)),
             ),
-          if (list.length > 4)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text('+ ${list.length - 4} more', style: const TextStyle(fontSize: 12.5, color: MonitorColors.muted)),
-            ),
+          if (today.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            const Text('TODAY', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: MonitorColors.byParent, letterSpacing: .6)),
+            for (final s in today.take(3)) line('${s['name'] ?? 'Student'}', '${(s['notice'] as Map)['summary'] ?? ''}'),
+            if (today.length > 3) line('+ ${today.length - 3} more', ''),
+          ],
+          if (later.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            const Text('COMING UP', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: MonitorColors.muted, letterSpacing: .6)),
+            for (final n in later.take(3)) line('${day('${n['date']}')} · ${n['student_name'] ?? 'Student'}', '${n['summary'] ?? ''}'),
+            if (later.length > 3) line('+ ${later.length - 3} more', ''),
+          ],
         ],
       ),
     );

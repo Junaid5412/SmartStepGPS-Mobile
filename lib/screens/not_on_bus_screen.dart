@@ -4,8 +4,8 @@ import 'package:intl/intl.dart';
 import '../services/api_service.dart';
 
 /// "Not on Bus" - the parent tells the bus, ahead of time, that a child will not ride it: dropped or
-/// collected by the parent, or not coming at all. There is no approval; the bus monitor sees it on the
-/// child's card straight away. Replaces the old Leave screen.
+/// collected by the parent, or not coming at all. The bus monitor sees it straight away (today on the
+/// child's card, later days under "Not on Bus" on the monitor's home). Replaces the old Leave screen.
 class NotOnBusScreen extends StatefulWidget {
   final List<dynamic> students;
 
@@ -337,9 +337,6 @@ class _NotOnBusScreenState extends State<NotOnBusScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const Text('Tell the bus', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: _C.ink)),
-          const SizedBox(height: 2),
-          const Text('No approval needed - the bus monitor sees it straight away.',
-              style: TextStyle(fontSize: 12.5, color: _C.muted)),
           const SizedBox(height: 16),
 
           if (widget.students.length > 1) ...[

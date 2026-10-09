@@ -517,16 +517,15 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
-    final studentName = widget.student['name']?.toString() ?? 'Student';
-
     return Scaffold(
       appBar: AppBar(
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              '$studentName - Bus Tracking',
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            // Not the child's name: siblings share one bus, so the screen is about the bus.
+            const Text(
+              'Bus Tracking',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
             Row(
               children: [
@@ -541,7 +540,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                 const SizedBox(width: 5),
                 Text(
                   _isActiveWindow
-                      ? (_currentShift == 'morning' ? 'Morning Pickup Window' : 'Afternoon Drop Window')
+                      ? (_currentShift == 'morning' ? 'Morning Pickup Window' : 'Evening Drop Window')
                       : 'Outside Shift Hours (Offline)',
                   style: const TextStyle(fontSize: 11, color: Colors.white70),
                 ),

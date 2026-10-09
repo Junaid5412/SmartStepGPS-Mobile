@@ -130,6 +130,9 @@ class MonitorStore extends ChangeNotifier {
   static const graceMin = 15;
 
   List<dynamic> students = [];
+
+  /// "Not on Bus" notices for the coming days (today's are on each child, under 'notice').
+  List<Map<String, dynamic>> upcoming = [];
   bool loading = true;
   bool loaded = false;
   String? error;
@@ -193,6 +196,10 @@ class MonitorStore extends ChangeNotifier {
       if (r['success'] == true) {
         final now = DateTime.now();
         students = (r['data'] as List?) ?? [];
+        upcoming = [
+          for (final n in (r['upcoming_notices'] as List?) ?? const [])
+            if (n is Map) Map<String, dynamic>.from(n),
+        ];
         final s = r['staff'];
         if (s is Map) {
           staffName = s['name']?.toString() ?? staffName;
