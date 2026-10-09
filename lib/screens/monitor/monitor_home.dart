@@ -265,74 +265,34 @@ class MonitorHome extends StatelessWidget {
     );
   }
 
-  /// "Not on Bus": what parents have told the bus - today, and the coming days - so the monitor
-  /// knows before she sets off. Always shown, so she always knows where to look.
+  /// Leave parents applied for - one line: how many today, how many coming up. Opens the full list.
+  /// Always shown, so the monitor always knows where to look.
   Widget _notices(BuildContext context) {
-    final today = store.noticedStudents;
-    final later = store.upcoming;
-    Widget line(String name, String summary) => Padding(
-          padding: const EdgeInsets.only(top: 4),
-          child: Text.rich(
-            TextSpan(children: [
-              TextSpan(text: '$name  ', style: const TextStyle(fontWeight: FontWeight.w700, color: MonitorColors.ink)),
-              TextSpan(text: summary, style: const TextStyle(color: MonitorColors.muted)),
-            ]),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 13),
-          ),
-        );
-    String day(String ymd) {
-      final d = DateTime.tryParse(ymd);
-      if (d == null) return ymd;
-      final now = DateTime.now();
-      final diff = DateTime(d.year, d.month, d.day).difference(DateTime(now.year, now.month, now.day)).inDays;
-      if (diff == 1) return 'Tomorrow';
-      const names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-      return '${names[d.weekday - 1]} ${d.day}/${d.month}';
-    }
-
+    final today = store.noticedStudents.length;
+    final later = store.upcoming.length;
+    final text = (today == 0 && later == 0)
+        ? 'No leave - every child rides as usual'
+        : [if (today > 0) '$today today', if (later > 0) '$later coming up'].join('  ·  ');
     return SurfaceCard(
       onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => MonitorNoticesScreen(store: store))),
-      borderColor: (today.isNotEmpty || later.isNotEmpty) ? MonitorColors.byParent.withValues(alpha: 0.4) : null,
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(children: [
-            const IconTile(icon: Icons.no_transfer_rounded, color: MonitorColors.byParent, size: 34),
-            const SizedBox(width: 10),
-            const Expanded(
-              child: Text('Not on Bus',
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: MonitorColors.ink)),
-            ),
-            if (today.isNotEmpty) StatusPill(text: 'Today ${today.length}', color: MonitorColors.byParent),
-            if (later.isNotEmpty) ...[
-              const SizedBox(width: 6),
-              StatusPill(text: 'Coming ${later.length}', color: MonitorColors.muted),
-            ],
-            const Icon(Icons.chevron_right_rounded, color: MonitorColors.muted),
+      padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+      child: Row(children: [
+        IconTile(icon: Icons.event_busy_rounded, color: today > 0 ? MonitorColors.byParent : MonitorColors.muted, size: 38),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('Leave', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: MonitorColors.ink)),
+            Text(text,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: 12.5,
+                    color: today > 0 ? MonitorColors.byParent : MonitorColors.muted,
+                    fontWeight: today > 0 ? FontWeight.w700 : FontWeight.w400)),
           ]),
-          if (today.isEmpty && later.isEmpty)
-            const Padding(
-              padding: EdgeInsets.only(top: 8),
-              child: Text('No notices from parents. Every child rides as usual.',
-                  style: TextStyle(fontSize: 13, color: MonitorColors.muted)),
-            ),
-          if (today.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            const Text('TODAY', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: MonitorColors.byParent, letterSpacing: .6)),
-            for (final s in today.take(3)) line('${s['name'] ?? 'Student'}', '${(s['notice'] as Map)['summary'] ?? ''}'),
-            if (today.length > 3) line('+ ${today.length - 3} more', ''),
-          ],
-          if (later.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            const Text('COMING UP', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: MonitorColors.muted, letterSpacing: .6)),
-            for (final n in later.take(3)) line('${day('${n['date']}')} · ${n['student_name'] ?? 'Student'}', '${n['summary'] ?? ''}'),
-            if (later.length > 3) line('+ ${later.length - 3} more', ''),
-          ],
-        ],
-      ),
+        ),
+        const Icon(Icons.chevron_right_rounded, color: MonitorColors.muted),
+      ]),
     );
   }
 

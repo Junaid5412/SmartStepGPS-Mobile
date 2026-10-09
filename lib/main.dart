@@ -6,9 +6,14 @@ import 'services/api_service.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await ApiService.initBaseUrl();
+  // Edge-to-edge (MainActivity turns it on): the app draws behind the status and navigation bars.
+  // No bar COLOURS are set here - Android 15 ignores them and Google Play flags the calls - only the
+  // icon brightness: light icons over the dark headers, dark ones over the light bottom strip.
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-    statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.light,
+    statusBarBrightness: Brightness.dark,
+    systemNavigationBarIconBrightness: Brightness.dark,
   ));
   runApp(const SmartStepApp());
 }
@@ -50,6 +55,13 @@ class SmartStepApp extends StatelessWidget {
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         ),
         useMaterial3: true,
+      ),
+      // Keeps every screen clear of the navigation bar now that the app is edge-to-edge: the strip
+      // under it is painted white and nothing - buttons, the last list item, the map card - sits
+      // beneath the bar. Headers still run up under the status bar (they handle that themselves).
+      builder: (context, child) => ColoredBox(
+        color: Colors.white,
+        child: SafeArea(top: false, child: child ?? const SizedBox.shrink()),
       ),
       home: const SplashScreen(),
     );

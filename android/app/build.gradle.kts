@@ -59,3 +59,8 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // enableEdgeToEdge() in MainActivity.
+    implementation("androidx.activity:activity-ktx:1.9.3")
+}

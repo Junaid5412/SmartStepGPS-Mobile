@@ -6,7 +6,7 @@ import '../widgets/custom_loading.dart';
 import 'map_screen.dart';
 import 'login_screen.dart';
 import 'attendance_screen.dart';
-import 'not_on_bus_screen.dart';
+import 'apply_leave_screen.dart';
 import 'announcements_screen.dart';
 import 'parent_profile_screen.dart';
 import 'terms_screen.dart';
@@ -601,8 +601,8 @@ class _ParentDashboardState extends State<ParentDashboard> {
       }));
     }
     if (_modules['leave'] == true) {
-      modules.add(_buildModuleCard('Not on Bus', Icons.no_transfer_rounded, const [Color(0xFFE53935), Color(0xFFC62828)], () {
-        _openNotOnBus();
+      modules.add(_buildModuleCard('Apply for Leave', Icons.event_busy_rounded, const [Color(0xFFE53935), Color(0xFFC62828)], () {
+        _openLeave();
       }));
     }
 
@@ -704,22 +704,22 @@ class _ParentDashboardState extends State<ParentDashboard> {
     );
   }
 
-  /// Opens Not on Bus, optionally with one child already chosen, and refreshes the child cards on
-  /// return so a notice just sent shows on its card at once.
-  Future<void> _openNotOnBus([int? studentId]) async {
+  /// Opens Apply for Leave, optionally with one child already chosen, and refreshes the child cards
+  /// on return so leave just applied for shows on its card at once.
+  Future<void> _openLeave([int? studentId]) async {
     await Navigator.push(context, MaterialPageRoute(
-      builder: (_) => NotOnBusScreen(students: _students, initialStudentId: studentId),
+      builder: (_) => ApplyLeaveScreen(students: _students, initialStudentId: studentId),
     ));
     if (mounted) _fetchStudents();
   }
 
-  /// Under each child: today's notice if there is one, otherwise a one-tap way to send one.
-  Widget _notOnBusLine(dynamic student) {
+  /// Under each child: today's leave if there is one, otherwise a one-tap way to apply.
+  Widget _leaveLine(dynamic student) {
     final n = student is Map ? student['not_on_bus_today'] : null;
     final id = int.tryParse('${student['id']}');
     if (n is Map) {
       return InkWell(
-        onTap: () => _openNotOnBus(id),
+        onTap: () => _openLeave(id),
         borderRadius: BorderRadius.circular(10),
         child: Container(
           width: double.infinity,
@@ -730,10 +730,10 @@ class _ParentDashboardState extends State<ParentDashboard> {
             border: Border.all(color: const Color(0xFFDDD6FE)),
           ),
           child: Row(children: [
-            const Icon(Icons.no_transfer_rounded, size: 16, color: Color(0xFF6D28D9)),
+            const Icon(Icons.event_busy_rounded, size: 16, color: Color(0xFF6D28D9)),
             const SizedBox(width: 8),
             Expanded(
-              child: Text('Today: ${n['summary'] ?? 'Not on the bus'}',
+              child: Text('Leave today: ${n['summary'] ?? ''}',
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: Color(0xFF5B21B6), fontSize: 12.5, fontWeight: FontWeight.w600)),
@@ -746,9 +746,9 @@ class _ParentDashboardState extends State<ParentDashboard> {
     return Align(
       alignment: Alignment.centerLeft,
       child: TextButton.icon(
-        onPressed: () => _openNotOnBus(id),
-        icon: const Icon(Icons.no_transfer_rounded, size: 17),
-        label: const Text('Not on the bus?', style: TextStyle(fontWeight: FontWeight.w700)),
+        onPressed: () => _openLeave(id),
+        icon: const Icon(Icons.event_busy_rounded, size: 17),
+        label: const Text('Apply for leave', style: TextStyle(fontWeight: FontWeight.w700)),
         style: TextButton.styleFrom(
           foregroundColor: const Color(0xFFC62828),
           padding: const EdgeInsets.symmetric(horizontal: 6),
@@ -809,7 +809,7 @@ class _ParentDashboardState extends State<ParentDashboard> {
             ],
            ),
            const SizedBox(height: 6),
-           _notOnBusLine(student),
+           _leaveLine(student),
            const SizedBox(height: 4),
           ],
           ),

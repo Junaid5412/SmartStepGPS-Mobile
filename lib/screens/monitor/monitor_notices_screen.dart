@@ -4,7 +4,7 @@ import 'package:intl/intl.dart';
 import 'monitor_store.dart';
 import 'monitor_widgets.dart';
 
-/// Every "Not on Bus" notice parents have sent for the monitor's children: today, then each of the
+/// All the leave parents applied for, for the monitor's children: today, then each of the
 /// coming days (two weeks ahead), so she knows before she sets off - not at the stop.
 /// Today's notices are also on each child's card in the shift, where she confirms them.
 class MonitorNoticesScreen extends StatelessWidget {
@@ -16,7 +16,7 @@ class MonitorNoticesScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: MonitorColors.page,
       appBar: AppBar(
-        title: const Text('Not on Bus', style: TextStyle(fontWeight: FontWeight.w700, color: Colors.white)),
+        title: const Text('Leave', style: TextStyle(fontWeight: FontWeight.w700, color: Colors.white)),
         backgroundColor: MonitorColors.navy,
         iconTheme: const IconThemeData(color: Colors.white),
         elevation: 0,
@@ -50,7 +50,7 @@ class MonitorNoticesScreen extends StatelessWidget {
                             Icon(Icons.directions_bus_rounded, color: MonitorColors.muted),
                             SizedBox(width: 12),
                             Expanded(
-                              child: Text('No notices from parents for the next two weeks. Every child rides as usual.',
+                              child: Text('No leave for the next two weeks. Every child rides as usual.',
                                   style: TextStyle(color: MonitorColors.muted)),
                             ),
                           ]),

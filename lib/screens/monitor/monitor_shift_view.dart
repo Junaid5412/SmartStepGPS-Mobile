@@ -490,9 +490,8 @@ class _MonitorShiftViewState extends State<MonitorShiftView> {
     final type = status?['event_type']?.toString();
     final at = _clock(status?['created_at']);
     final m = w.isMorning;
-    // A parent's "Not on Bus" notice for this trip, while the child is still to be dealt with.
+    // Leave the parent applied for on this trip, while the child is still to be dealt with.
     final notice = _stage == Stage.waiting ? store.noticeFor(s, w.key) : null;
-    final banner = notice == null ? null : _noticeBanner(w, s, notice);
 
     final info = Row(
       children: [
@@ -517,6 +516,7 @@ class _MonitorShiftViewState extends State<MonitorShiftView> {
             ],
           ),
         ),
+        if (notice != null) ...[const SizedBox(width: 8), _leaveTag(w, s, notice)],
       ],
     );
 
@@ -531,7 +531,7 @@ class _MonitorShiftViewState extends State<MonitorShiftView> {
               child: _primary(
                 w,
                 notice == 'parent' ? Icons.family_restroom_rounded : Icons.event_busy_rounded,
-                notice == 'parent' ? (m ? 'Confirm - parent drops' : 'Confirm - parent picks up') : 'Confirm - not coming',
+                'Confirm',
                 () => actions.mark(w, s, notice == 'parent' ? 'by_parent' : 'leave'),
                 color: notice == 'parent' ? MonitorColors.byParent : MonitorColors.red,
               ),
@@ -613,56 +613,65 @@ class _MonitorShiftViewState extends State<MonitorShiftView> {
               if (_stage == Stage.done) buttons else SizedBox(width: _stage == Stage.waiting ? 330 : 220, child: buttons),
             ],
           );
-          if (banner == null) return row;
-          return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [row, const SizedBox(height: 10), banner]);
+          return row;
         }
-        // Phones: the parent's message sits between the name and the buttons, so it is read first.
-        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          info,
-          if (banner != null) ...[const SizedBox(height: 10), banner],
-          const SizedBox(height: 10),
-          buttons,
-        ]);
+        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [info, const SizedBox(height: 10), buttons]);
       }),
     );
   }
 
-  /// The parent's message on the child's card: what happens on this trip, why, and their note.
-  Widget _noticeBanner(ShiftWindow w, dynamic s, String notice) {
+  /// What the parent applied for, as one short tag beside the child's name. Tapping it shows the
+  /// whole leave - both trips, the reason and the parent's note.
+  Widget _leaveTag(ShiftWindow w, dynamic s, String notice) {
     final n = store.noticeOf(s) ?? const {};
     final parent = notice == 'parent';
     final color = parent ? MonitorColors.byParent : MonitorColors.red;
     final reason = '${n['reason'] ?? ''}';
     final note = '${n['comment'] ?? ''}'.trim();
     final text = parent
-        ? (w.isMorning ? 'Parent will drop at school this morning' : 'Parent will pick up from school')
-        : 'Not coming${reason.isNotEmpty && reason != 'Parent' ? ' - $reason' : ''}';
-    return Container(
-      padding: const EdgeInsets.fromLTRB(10, 9, 10, 9),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withValues(alpha: 0.35)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(Icons.no_transfer_rounded, size: 18, color: color),
-          const SizedBox(width: 8),
-          Expanded(
+        ? (w.isMorning ? 'Leave: parent drops' : 'Leave: parent picks up')
+        : 'Leave: ${reason.isNotEmpty && reason != 'Parent' && reason != 'Absent' ? reason.toLowerCase() : 'absent'}';
+    return InkWell(
+      onTap: () => showModalBottomSheet(
+        context: context,
+        showDragHandle: true,
+        constraints: const BoxConstraints(maxWidth: 560),
+        shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+        builder: (sheet) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Not on Bus: $text', style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 13)),
-                if (note.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    child: Text('"$note"', style: const TextStyle(color: MonitorColors.ink, fontSize: 12.5)),
-                  ),
+                Text('${s['name'] ?? 'Student'}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+                const SizedBox(height: 4),
+                Text('${n['summary'] ?? ''}', style: TextStyle(fontSize: 14, color: color, fontWeight: FontWeight.w700)),
+                if (note.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  const Text("Parent's note", style: TextStyle(fontSize: 12, color: MonitorColors.muted, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 2),
+                  Text(note, style: const TextStyle(fontSize: 15)),
+                ],
               ],
             ),
           ),
-        ],
+        ),
+      ),
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 170),
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+        decoration: BoxDecoration(color: color.withValues(alpha: 0.10), borderRadius: BorderRadius.circular(20)),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Flexible(
+            child: Text(text,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: color, fontSize: 11.5, fontWeight: FontWeight.w700)),
+          ),
+          if (note.isNotEmpty) ...[const SizedBox(width: 4), Icon(Icons.sticky_note_2_outlined, size: 13, color: color)],
+        ]),
       ),
     );
   }

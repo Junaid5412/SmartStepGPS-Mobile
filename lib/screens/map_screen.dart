@@ -515,38 +515,27 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     }
   }
 
+  /// "BUS 1 · 245871": the bus's name and plate, whichever of them are set.
+  String get _busTitle {
+    final parts = [widget.student['bus_label'], widget.student['bus_name']]
+        .map((v) => (v ?? '').toString().trim())
+        .where((v) => v.isNotEmpty && v.toLowerCase() != 'auto detected')
+        .toSet()
+        .toList();
+    return parts.isEmpty ? 'Bus Tracking' : parts.join(' · ');
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Not the child's name: siblings share one bus, so the screen is about the bus.
-            const Text(
-              'Bus Tracking',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            Row(
-              children: [
-                Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: _isActiveWindow ? Colors.greenAccent : Colors.orangeAccent,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-                const SizedBox(width: 5),
-                Text(
-                  _isActiveWindow
-                      ? (_currentShift == 'morning' ? 'Morning Pickup Window' : 'Evening Drop Window')
-                      : 'Outside Shift Hours (Offline)',
-                  style: const TextStyle(fontSize: 11, color: Colors.white70),
-                ),
-              ],
-            ),
-          ],
+        // The bus - its number and plate - and nothing else. Not the child's name: siblings share a
+        // bus, so the screen is about the bus.
+        title: Text(
+          _busTitle,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
         ),
         backgroundColor: const Color(0xFF1E3C72),
         elevation: 0,
