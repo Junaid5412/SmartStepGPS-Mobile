@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
@@ -50,6 +51,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   LatLng? _previousBusLocation; // previous raw GPS position (for animation start)
   double _speed = 0.0;
   String _lastUpdated = '';
+  int? _ageSec;       // how old the bus position was when fetched (server clock), null if unknown
+  DateTime? _ageAt;   // when that was
+  bool _full = false; // full-screen map
   double _busBearing = 0.0;   // heading in degrees (0=north, 90=east)
   LatLng? _bearingAnchor;     // where that heading was measured from
 
@@ -253,6 +257,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           }
           spd = double.tryParse(locData['speed']?.toString() ?? '0') ?? 0.0;
           upd = locData['updated_at']?.toString() ?? '';
+          final a = locData['age_sec'];
+          _ageSec = a is num ? a.toInt() : int.tryParse('${a ?? ''}');
+          _ageAt = DateTime.now();
         }
 
         setState(() {
@@ -270,7 +277,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
         // Smooth animate bus marker to new position (Uber-style glide)
         if (busPos != null) {
-          _animateBusTo(busPos);
+          _animateBusTo(_onRoad(busPos));
         }
 
         // The road line: where the bus is going for this child, re-drawn when the trip changes
@@ -407,6 +414,51 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         _roadPolyline = [bus, ...dest];
       });
     }
+  }
+
+  /// GPS - a tracker's or an older phone's - wanders a few metres to the side of the road. Within
+  /// 25 m of the route line the bus is drawn ON the line, as Uber does; further away it has really
+  /// taken another road, and is drawn where it is.
+  LatLng _onRoad(LatLng p) {
+    final line = _roadPolyline;
+    if (line.length < 2) return p;
+    const mPerDegLat = 111320.0;
+    final mPerDegLng = 111320.0 * math.cos(p.latitude * math.pi / 180);
+    double bestD = double.infinity;
+    LatLng best = p;
+    final limit = math.min(line.length - 1, 400);
+    for (var i = 0; i < limit; i++) {
+      final a = line[i], b = line[i + 1];
+      final ax = (a.longitude - p.longitude) * mPerDegLng, ay = (a.latitude - p.latitude) * mPerDegLat;
+      final bx = (b.longitude - p.longitude) * mPerDegLng, by = (b.latitude - p.latitude) * mPerDegLat;
+      final dx = bx - ax, dy = by - ay;
+      final len2 = dx * dx + dy * dy;
+      final t = len2 == 0 ? 0.0 : (-(ax * dx + ay * dy) / len2).clamp(0.0, 1.0);
+      final x = ax + t * dx, y = ay + t * dy;
+      final d = math.sqrt(x * x + y * y);
+      if (d < bestD) {
+        bestD = d;
+        best = LatLng(a.latitude + t * (b.latitude - a.latitude), a.longitude + t * (b.longitude - a.longitude));
+      }
+    }
+    return bestD <= 25 ? best : p;
+  }
+
+  /// How old the bus position is now, in seconds, or null when unknown.
+  int? get _ageNow => _ageSec == null || _ageAt == null ? null : _ageSec! + DateTime.now().difference(_ageAt!).inSeconds;
+
+  bool get _positionLive => (_ageNow ?? 0) <= 60;
+
+  /// Under the speed: "Live", or how long ago the bus last reported - never a bare clock time.
+  String get _freshLabel {
+    final a = _ageNow;
+    if (a == null) return _lastUpdated.isEmpty ? '' : 'Live';
+    if (a <= 30) return 'Live';
+    if (a < 90) return 'Updated 1 min ago';
+    if (a < 3600) return 'Updated ${(a / 60).round()} min ago';
+    final t = DateTime.now().subtract(Duration(seconds: a));
+    final h = t.hour % 12 == 0 ? 12 : t.hour % 12;
+    return 'Last seen $h:${t.minute.toString().padLeft(2, '0')} ${t.hour >= 12 ? 'PM' : 'AM'}';
   }
 
   /// ─── Uber-Style Smooth Marker Animation ───────────────────────────────
@@ -564,8 +616,14 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
+    final topInset = _full ? MediaQuery.of(context).padding.top : 0.0;
+    return PopScope(
+      canPop: !_full,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _full) _setFull(false);
+      },
+      child: Scaffold(
+      appBar: _full ? null : AppBar(
         // The bus - its number and plate - and nothing else. Not the child's name: siblings share a
         // bus, so the screen is about the bus.
         title: Text(
@@ -686,7 +744,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                     Align(
                       alignment: Alignment.topLeft,
                       child: Padding(
-                        padding: const EdgeInsets.all(6),
+                        padding: EdgeInsets.fromLTRB(6, 6 + topInset, 6, 6),
                         child: DecoratedBox(
                           decoration: BoxDecoration(
                             color: Colors.white.withValues(alpha: 0.65),
@@ -713,17 +771,27 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                 //    those two and crowded the map.
                 Positioned(
                   right: 14,
-                  top: 16,
-                  child: _buildFloatingAction(
-                    icon: Icons.crop_free_rounded,
-                    tooltip: 'Show bus, home and school',
-                    onTap: _fitAllMarkers,
+                  top: 16 + topInset,
+                  child: Column(
+                    children: [
+                      _buildFloatingAction(
+                        icon: _full ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded,
+                        tooltip: _full ? 'Exit full screen' : 'Full screen',
+                        onTap: () => _setFull(!_full),
+                      ),
+                      const SizedBox(height: 10),
+                      _buildFloatingAction(
+                        icon: Icons.crop_free_rounded,
+                        tooltip: 'Show bus, home and school',
+                        onTap: _fitAllMarkers,
+                      ),
+                    ],
                   ),
                 ),
 
                 // Status banner, just under the header.
                 Positioned(
-                  top: 12,
+                  top: 12 + topInset,
                   left: 0,
                   right: 0,
                   child: IgnorePointer(
@@ -756,14 +824,49 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                 ),
 
                 // 4. Bottom Info Card (Distance, ETA, Speed & Shift info)
-                Positioned(
-                  left: 12,
-                  right: 12,
-                  bottom: 16,
-                  child: _buildBottomMetricsCard(),
-                ),
+                if (!_full)
+                  Positioned(
+                    left: 12,
+                    right: 12,
+                    bottom: 16,
+                    child: _buildBottomMetricsCard(),
+                  )
+                else
+                  // Full screen: the essentials in one small pill.
+                  Positioned(
+                    left: 12,
+                    bottom: 16,
+                    child: _fullPill(),
+                  ),
               ],
             ),
+      ),
+    );
+  }
+
+  /// Full screen hides the header, so the status bar sits on the light map: dark icons there.
+  void _setFull(bool on) {
+    setState(() => _full = on);
+    SystemChrome.setSystemUIOverlayStyle(on ? SystemUiOverlayStyle.dark : SystemUiOverlayStyle.light);
+  }
+
+  Widget _fullPill() {
+    final parts = [
+      if (_etaMinutes > 0) '~$_etaMinutes min $_targetLabel',
+      _positionLive ? '${_speed.toInt()} km/h' : _freshLabel,
+    ];
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E3C72),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 8, offset: Offset(0, 2))],
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        const Icon(Icons.directions_bus_rounded, color: Colors.white, size: 16),
+        const SizedBox(width: 6),
+        Text(parts.join('  ·  '), style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700)),
+      ]),
     );
   }
 
@@ -1058,8 +1161,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                 icon: Icons.speed_rounded,
                 iconColor: const Color(0xFF2E7D32),
                 title: 'Bus Speed',
-                value: '${_speed.toInt()} km/h',
-                subtitle: _lastUpdated.isNotEmpty ? _lastUpdated.split(' ').last : 'Live',
+                value: _positionLive ? '${_speed.toInt()} km/h' : '--',
+                subtitle: _freshLabel,
               ),
             ],
           ),
