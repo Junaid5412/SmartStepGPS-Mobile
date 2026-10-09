@@ -226,7 +226,14 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
       final loc = r['location'] ?? r['last_known_location'];
       if (loc is! Map || loc['lat'] == null || loc['lng'] == null) return;
       // The server may answer with this very phone's position (the parents' backup) - not the tracker.
-      if (loc['source'] == 'monitor') return;
+      if (loc['source'] == 'monitor') {
+        if (_phonePos == null) {
+          _phonePos = LatLng((loc['lat'] as num).toDouble(), (loc['lng'] as num).toDouble());
+          _phoneAt = DateTime.tryParse('${loc['updated_at'] ?? ''}'.replaceFirst(' ', 'T')) ?? DateTime.now();
+          _onAnyFix();
+        }
+        return;
+      }
       final p = LatLng((loc['lat'] as num).toDouble(), (loc['lng'] as num).toDouble());
       // The fix's own time (Qatar time, like this phone) - so a tracker repeating an old position
       // while it has no signal is recognised as stale, not as a bus standing still.
@@ -431,7 +438,10 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
   Future<void> _maybePlan() async {
     final w = _shift;
     if (w == null || _planning) return;
-    final start = _best ?? (store.schoolLat != null ? LatLng(store.schoolLat!, store.schoolLng!) : null);
+    // Only from where the bus really is. Starting from the school while the first position was
+    // still on its way (just after opening the app) drew school -> next stop -> school: two roads
+    // between the next stop and the school, and no line from the bus at all.
+    final start = _best;
     if (start == null) return;
     final stops = _stops(w);
     final todo = stops.where((s) => s.state == _St.todo && s.point != null).toList();
@@ -442,7 +452,8 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     // Re-plan when the stops or the next stop change, or every minute while the bus is moving -
     // but never more than every 15 seconds, to stay gentle with the free routing service.
     final changed = sig != _planSig;
-    final drifting = age > const Duration(seconds: 60) && moved > 300;
+    // A big jump (the tracker coming back after the phone, or the first real fix) re-plans at once.
+    final drifting = (age > const Duration(seconds: 60) && moved > 300) || moved > 800;
     if (!changed && !drifting) return;
     if (_planSig.isNotEmpty && age < Duration(seconds: changed ? 3 : 15)) return;
 
