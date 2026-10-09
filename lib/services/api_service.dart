@@ -111,7 +111,13 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> getSettings() async {
-    final response = await http.get(Uri.parse('$baseUrl/settings.php'));
+    // With the token, so the server answers with THIS parent's school's module settings
+    // (App Module Settings on the portal); without it every module came back switched on.
+    final token = await getToken();
+    final response = await http.get(
+      Uri.parse('$baseUrl/settings.php'),
+      headers: {if (token.isNotEmpty) 'Authorization': 'Bearer $token'},
+    );
     if (response.statusCode == 200) {
       return _safeDecode(response.body);
     }

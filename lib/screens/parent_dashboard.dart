@@ -20,7 +20,7 @@ class ParentDashboard extends StatefulWidget {
   _ParentDashboardState createState() => _ParentDashboardState();
 }
 
-class _ParentDashboardState extends State<ParentDashboard> {
+class _ParentDashboardState extends State<ParentDashboard> with WidgetsBindingObserver {
   List<dynamic> _students = [];
   bool _isLoading = true;
   String _userName = 'Parent';
@@ -37,6 +37,7 @@ class _ParentDashboardState extends State<ParentDashboard> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _pageController = PageController(viewportFraction: 0.93);
     _startBannerTimer();
     _loadProfile();
@@ -46,9 +47,16 @@ class _ParentDashboardState extends State<ParentDashboard> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _bannerTimer?.cancel();
     _pageController.dispose();
     super.dispose();
+  }
+
+  // Back in the app: the school may have changed which modules parents see.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) _loadSettings();
   }
 
   void _startBannerTimer() {
@@ -123,7 +131,7 @@ class _ParentDashboardState extends State<ParentDashboard> {
   Future<void> _loadSettings() async {
     try {
       final res = await ApiService.getSettings();
-      if (res['success'] == true) {
+      if (res['success'] == true && mounted) {
         setState(() {
           _companyName = res['company_name'] ?? res['app_name'] ?? _companyName;
           _companyTagline = res['company_tagline'] ?? _companyTagline;

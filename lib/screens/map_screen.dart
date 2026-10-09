@@ -84,6 +84,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   String _childStage = 'waiting'; // this child on this trip: waiting | on_bus | done
   String _routedSig = '';         // which trip the line was drawn for
   String _targetLabel = 'to your stop';
+  String _locSource = ''; // tracker | monitor - a switch re-draws the line at once
 
   @override
   void initState() {
@@ -259,6 +260,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
         // Bus location (use active location, or last_known_location if outside active window)
         final locData = active ? res['location'] : (res['last_known_location'] ?? res['location']);
+        if (locData is Map) _locSource = '${locData['source'] ?? ''}';
         LatLng? busPos;
         double spd = 0.0;
         String upd = '';
@@ -293,15 +295,20 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           _animateBusTo(_onRoad(busPos));
         }
 
-        // The road line: where the bus is going for this child, re-drawn when the trip changes
-        // (picked up, dropped) or every 15 s once the bus has moved ~45 m.
+        // The road line: where the bus is going for this child. Re-drawn at once when the trip
+        // changes (picked up, dropped) or the position switches between tracker and monitor phone;
+        // within 3 s when the bus is off the line (another road, or a setting changed on the
+        // portal); and every 15 s once the bus has moved ~45 m.
         if (_busLocation != null) {
           final now = DateTime.now();
-          final sig = '$_currentShift|$_childStage';
+          final sig = '$_currentShift|$_childStage|$_locSource';
+          final sinceLast = _lastRouteFetchTime == null ? 1 << 30 : now.difference(_lastRouteFetchTime!).inSeconds;
           bool shouldFetchRoute = false;
           if (sig != _routedSig || _lastRouteFetchTime == null) {
             shouldFetchRoute = true;
-          } else if (now.difference(_lastRouteFetchTime!).inSeconds >= 15) {
+          } else if (sinceLast >= 3 && _roadPolyline.length > 1 && _nearestOnLine(_busLocation!).$3 > 60) {
+            shouldFetchRoute = true;
+          } else if (sinceLast >= 15) {
             if (_lastRoutedBusPosition == null) {
               shouldFetchRoute = true;
             } else {
@@ -433,12 +440,19 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   /// 25 m of the route line the bus is drawn ON the line, as Uber does; further away it has really
   /// taken another road, and is drawn where it is.
   LatLng _onRoad(LatLng p) {
+    final (snap, _, d) = _nearestOnLine(p);
+    return d <= 25 ? snap : p;
+  }
+
+  /// The nearest point of the route line to [p]: (that point, the segment it is on, metres away).
+  (LatLng, int, double) _nearestOnLine(LatLng p) {
     final line = _roadPolyline;
-    if (line.length < 2) return p;
+    if (line.length < 2) return (p, 0, double.infinity);
     const mPerDegLat = 111320.0;
     final mPerDegLng = 111320.0 * math.cos(p.latitude * math.pi / 180);
     double bestD = double.infinity;
     LatLng best = p;
+    var bestI = 0;
     final limit = math.min(line.length - 1, 400);
     for (var i = 0; i < limit; i++) {
       final a = line[i], b = line[i + 1];
@@ -451,10 +465,21 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       final d = math.sqrt(x * x + y * y);
       if (d < bestD) {
         bestD = d;
+        bestI = i;
         best = LatLng(a.latitude + t * (b.latitude - a.latitude), a.longitude + t * (b.longitude - a.longitude));
       }
     }
-    return bestD <= 25 ? best : p;
+    return (best, bestI, bestD);
+  }
+
+  /// The line from the bus onwards - the part already driven is not drawn behind it.
+  List<LatLng> get _lineAhead {
+    final line = _roadPolyline;
+    final bus = _busLocation;
+    if (bus == null || line.length < 2) return line;
+    final (snap, i, d) = _nearestOnLine(bus);
+    if (d > 60) return line;
+    return [snap, ...line.sublist(i + 1)];
   }
 
   /// How old the bus position is now, in seconds, or null when unknown.
@@ -685,7 +710,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                       PolylineLayer(
                         polylines: [
                           Polyline(
-                            points: _roadPolyline,
+                            points: _lineAhead,
                             strokeWidth: 6.0,
                             color: const Color(0xFF2563EB),
                             borderColor: Colors.white,
