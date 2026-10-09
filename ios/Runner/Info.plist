@@ -67,7 +67,7 @@
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Your location is used only while the app is open, to show where you are in relation to the school bus and the stop. It stays on your device and is never sent to our servers.</string>
+	<string>Your location is used only while the app is open. For parents, it shows where you are in relation to the school bus and the stop, and stays on your device. For bus monitors, during a shift it is also sent to the school as the bus position, so parents can still follow the bus if its GPS tracker has no signal.</string>
 	<!--
 	  ITMS-90683. Apple scans the BINARY for references to protected APIs, not for what the app
 	  actually calls. The geolocator plugin's iOS code contains a reference to
@@ -80,7 +80,7 @@
 	  is open. The wording below says exactly that, so it stays truthful if iOS ever shows it.
 	-->
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>Your location is used only while the app is open, to show where you are in relation to the school bus and the stop. This app does not track your location in the background.</string>
+	<string>Your location is used only while the app is open: for parents, to show where you are in relation to the school bus; for bus monitors, during a shift, as the bus position for parents. This app does not track your location in the background.</string>
 	<!--
 	  Export compliance. Every upload otherwise stops in App Store Connect on the question "Does
 	  your app use encryption?", and the build cannot go to TestFlight or review until it is
