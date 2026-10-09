@@ -12,6 +12,7 @@ import 'monitor/monitor_home.dart';
 import 'monitor/monitor_profile.dart';
 import 'monitor/monitor_route_view.dart';
 import 'monitor/monitor_store.dart';
+import 'monitor/phone_location.dart';
 import 'terms_screen.dart';
 
 /// The bus monitor's app: Home (today at a glance), Attendance (one shift at a time, unlocked only
@@ -46,11 +47,14 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
   @override
   void dispose() {
     _store.removeListener(_onStore);
+    PhoneLocation.instance.stop();
     _store.dispose();
     super.dispose();
   }
 
   void _onStore() {
+    // While a shift is open: the phone's position for the map, and the bus's backup position for parents.
+    if (_store.loaded) PhoneLocation.instance.sync(_store);
     if (_store.unauthorized) {
       _store.unauthorized = false;
       _logout();

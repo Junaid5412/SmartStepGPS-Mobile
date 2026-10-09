@@ -243,6 +243,20 @@ class ApiService {
     return _safeDecode(response.body);
   }
 
+  /// The monitor's phone position during a shift - the bus's backup position for parents.
+  static Future<Map<String, dynamic>> postMonitorLocation(
+      double lat, double lng, double accuracy, double speedKmh, double heading) async {
+    final token = await getToken();
+    final response = await http
+        .post(
+          Uri.parse('$baseUrl/monitor_location.php'),
+          headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+          body: jsonEncode({'lat': lat, 'lng': lng, 'accuracy': accuracy, 'speed': speedKmh, 'heading': heading}),
+        )
+        .timeout(const Duration(seconds: 10));
+    return _safeDecode(response.body);
+  }
+
   static Future<Map<String, dynamic>> getProfile() async {
     final token = await getToken();
     final response = await http.get(

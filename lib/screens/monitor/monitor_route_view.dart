@@ -3,7 +3,6 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -15,6 +14,7 @@ import 'monitor_actions.dart';
 import 'monitor_shift_view.dart';
 import 'monitor_store.dart';
 import 'monitor_widgets.dart';
+import 'phone_location.dart';
 import 'route_planner.dart';
 
 /// The Shift tab - the ONE place attendance is marked. While a shift is open it shows the stops in
@@ -86,7 +86,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
   bool _showDone = false;
 
   // ---- where the bus is ---------------------------------------------------------------------------
-  StreamSubscription<Position>? _gps;
+  bool _phoneOn = false;
   Timer? _trackerPoll;
   LatLng? _busPos; // the tracker
   DateTime? _busAt;
@@ -200,24 +200,22 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     });
   }
 
-  Future<void> _startPhone() async {
-    try {
-      if (!await Geolocator.isLocationServiceEnabled()) return;
-      var perm = await Geolocator.checkPermission();
-      if (perm == LocationPermission.denied) perm = await Geolocator.requestPermission();
-      if (perm == LocationPermission.denied || perm == LocationPermission.deniedForever) return;
-      if (!mounted || _trackerPoll == null) return;
-      _gps = Geolocator.getPositionStream(
-        locationSettings: const LocationSettings(accuracy: LocationAccuracy.bestForNavigation, distanceFilter: 2),
-      ).listen((p) {
-        _phonePos = LatLng(p.latitude, p.longitude);
-        _phoneAt = DateTime.now();
-        _phoneDot.value = _phonePos;
-        _onAnyFix();
-      }, onError: (Object e) => debugPrint('Phone location: $e'));
-    } catch (e) {
-      debugPrint('Phone location unavailable: $e'); // the tracker alone still drives the page
-    }
+  // The phone's position comes from the dashboard-wide PhoneLocation (which also sends it to the
+  // server as the bus's backup position), so the GPS is started once, not once per screen.
+  void _startPhone() {
+    if (_phoneOn) return;
+    _phoneOn = true;
+    PhoneLocation.instance.position.addListener(_onPhone);
+    if (PhoneLocation.instance.position.value != null) _onPhone();
+  }
+
+  void _onPhone() {
+    final p = PhoneLocation.instance.position.value;
+    if (p == null || !mounted) return;
+    _phonePos = p;
+    _phoneAt = PhoneLocation.instance.at ?? DateTime.now();
+    _phoneDot.value = p;
+    _onAnyFix();
   }
 
   Future<void> _pollTracker() async {
@@ -225,6 +223,8 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
       final r = await ApiService.getBusLocation(store.busDeviceId);
       final loc = r['location'] ?? r['last_known_location'];
       if (loc is! Map || loc['lat'] == null || loc['lng'] == null) return;
+      // The server may answer with this very phone's position (the parents' backup) - not the tracker.
+      if (loc['source'] == 'monitor') return;
       final p = LatLng((loc['lat'] as num).toDouble(), (loc['lng'] as num).toDouble());
       // The fix's own time (Qatar time, like this phone) - so a tracker repeating an old position
       // while it has no signal is recognised as stale, not as a bus standing still.
@@ -236,8 +236,8 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
   }
 
   void _stopTracking() {
-    _gps?.cancel();
-    _gps = null;
+    if (_phoneOn) PhoneLocation.instance.position.removeListener(_onPhone);
+    _phoneOn = false;
     _trackerPoll?.cancel();
     _trackerPoll = null;
     _clock?.cancel();
