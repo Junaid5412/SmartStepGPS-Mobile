@@ -78,7 +78,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
   static const _prefMode = 'monitor_shift_view';
 
   final _map = MapController();
-  final _sheet = DraggableScrollableController();
+  bool _cardOpen = false; // the map's stop card: small, or opened upwards
   Widget? _tiles;
   bool _mapReady = false;
   bool _fitted = false;
@@ -156,7 +156,6 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     _shown.dispose();
     _phoneDot.dispose();
     _bannerTimer?.cancel();
-    _sheet.dispose();
     super.dispose();
   }
 
@@ -420,9 +419,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     setState(() => _activeKey = hit!.key);
     _say('Arrived at ${hit.title}.');
     _planSig = '';
-    if (!_listMode && _sheet.isAttached && _sheet.size < 0.3) {
-      _sheet.animateTo(0.34, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
-    }
+    if (!_listMode) setState(() => _cardOpen = true); // at the stop: its children, ready to mark
   }
 
   void _say(String text) {
@@ -734,10 +731,11 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
                     ),
                   ]),
           ),
+          // Licence credit: under the position label, clear of the stop card at the bottom.
           const Align(
-            alignment: Alignment.bottomLeft,
+            alignment: Alignment.topLeft,
             child: Padding(
-              padding: EdgeInsets.fromLTRB(8, 8, 8, 4),
+              padding: EdgeInsets.fromLTRB(16, 50, 8, 4),
               child: Text('© OpenStreetMap', style: TextStyle(fontSize: 9, color: Color(0xFF64748B))),
             ),
           ),
@@ -772,7 +770,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
           }, on: _follow),
           const SizedBox(height: 10),
           _fab(Icons.format_list_numbered_rounded, 'All stops', () {
-            if (_sheet.isAttached) _sheet.animateTo(0.88, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+            setState(() => _cardOpen = true);
           }),
         ]),
       ),
@@ -787,43 +785,177 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
             child: Text(_banner!, style: const TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w600)),
           ),
         ),
-      DraggableScrollableSheet(
-        controller: _sheet,
-        initialChildSize: 0.34,
-        minChildSize: 0.14,
-        maxChildSize: 0.88,
-        snap: true,
-        snapSizes: const [0.34, 0.6],
-        builder: (context, scroll) => DecoratedBox(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
-            boxShadow: [BoxShadow(color: Color(0x22000000), blurRadius: 16, offset: Offset(0, -2))],
-          ),
-          child: ListView(
-            controller: scroll,
-            padding: const EdgeInsets.fromLTRB(14, 8, 14, 20),
-            children: [
-              Center(child: Container(width: 38, height: 4, decoration: BoxDecoration(color: MonitorColors.line, borderRadius: BorderRadius.circular(4)))),
-              const SizedBox(height: 8),
-              if (next == null) _allDone(w) else ...[
-                _stopHeader(next, w, etas),
-                const SizedBox(height: 10),
-                ..._kidRows(next, w),
-                _bulk(next, w),
-                const SizedBox(height: 10),
-                _stopTools(next),
-              ],
-              const Divider(height: 28, color: MonitorColors.line),
-              const SectionTitle('All stops'),
-              const SizedBox(height: 6),
-              ..._compactStops(stops, next, w, etas),
-            ],
-          ),
-        ),
+      Positioned(
+        left: 10,
+        right: 10,
+        bottom: 10,
+        child: _stopCardSmall(w, stops, next, etas),
       ),
     ]);
   }
+
+  /// The map's card. Closed: the next stop in two lines and the one button that matters there.
+  /// Open (tap): every child with their buttons, call / directions / skip, and all stops.
+  Widget _stopCardSmall(ShiftWindow w, List<_Stop> stops, _Stop? next, Map<String, DateTime> etas) {
+    final maxOpen = MediaQuery.of(context).size.height * 0.62;
+    void toggle() => setState(() => _cardOpen = !_cardOpen);
+    return Material(
+      color: Colors.white,
+      elevation: 8,
+      shadowColor: Colors.black38,
+      borderRadius: BorderRadius.circular(18),
+      child: AnimatedSize(
+        duration: const Duration(milliseconds: 200),
+        alignment: Alignment.bottomCenter,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: toggle,
+              child: Column(children: [
+                Container(width: 34, height: 4, margin: const EdgeInsets.only(bottom: 8),
+                    decoration: BoxDecoration(color: MonitorColors.line, borderRadius: BorderRadius.circular(4))),
+                if (next == null) _allDone(w) else _nextLine(next, w, etas),
+              ]),
+            ),
+            if (_cardOpen)
+              ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: maxOpen),
+                child: SingleChildScrollView(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                    if (next != null) ...[
+                      const SizedBox(height: 10),
+                      ..._kidRows(next, w),
+                      _bulk(next, w),
+                      const SizedBox(height: 8),
+                      _stopTools(next),
+                    ],
+                    const Divider(height: 22, color: MonitorColors.line),
+                    const SectionTitle('All stops'),
+                    const SizedBox(height: 4),
+                    ..._compactStops(stops, next, w, etas),
+                  ]),
+                ),
+              )
+            else if (next != null)
+              ..._quickAction(next, w),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  /// "1  Imran Khan                Reach 7:45 AM"
+  /// "   Next stop · 2.5 km · 3 left        ⌃"
+  Widget _nextLine(_Stop s, ShiftWindow w, Map<String, DateTime> etas) {
+    final idx = _planKeys.indexOf(s.key);
+    final reach = _reach(etas, s);
+    final left = _planKeys.length;
+    return Row(children: [
+      Container(
+        width: 34,
+        height: 34,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(color: w.color, shape: BoxShape.circle),
+        child: s.school
+            ? const Icon(Icons.school_rounded, size: 18, color: Colors.white)
+            : Text(idx >= 0 ? '${idx + 1}' : '•', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14)),
+      ),
+      const SizedBox(width: 10),
+      Expanded(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(s.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w800)),
+          Text(
+            [s.school ? 'Next: school' : 'Next stop', _away(s), if (left > 1) '$left left'].where((t) => t.isNotEmpty).join('  ·  '),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 11.5, color: MonitorColors.muted),
+          ),
+        ]),
+      ),
+      if (reach.isNotEmpty) ...[
+        const SizedBox(width: 6),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(color: w.color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(20)),
+          child: Text(reach.replaceFirst('Reach ', ''), style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800, color: w.color)),
+        ),
+      ],
+      Icon(_cardOpen ? Icons.keyboard_arrow_down_rounded : Icons.keyboard_arrow_up_rounded, color: MonitorColors.muted, size: 22),
+    ]);
+  }
+
+  /// Closed card: the stop's main step as one button ("Picked up · Zara", "All picked up (2)"),
+  /// with call and directions beside it. Leave to confirm, or anything else, opens the card.
+  List<Widget> _quickAction(_Stop s, ShiftWindow w) {
+    final kids = _mainKids(s, w);
+    final type = _mainType(s, w);
+    final leaveToConfirm = s.kids.where((k) {
+      final a = _action(k, s, w);
+      return a != null && (a.$2 == 'leave' || a.$2 == 'by_parent');
+    }).length;
+    final f = s.family;
+    final actions = MonitorActions(context, store);
+    final String label;
+    VoidCallback? onTap;
+    if (kids.length == 1) {
+      label = '${_action(kids.first, s, w)!.$1} · ${'${kids.first['name'] ?? ''}'.split(' ').first}';
+      onTap = () => actions.mark(w, kids.first, type);
+    } else if (kids.length > 1) {
+      label = '${_mainTitle(s, w)} (${kids.length})';
+      onTap = () => actions.markMany(w, kids, type, _mainTitle(s, w));
+    } else {
+      label = leaveToConfirm > 0 ? 'Confirm leave ($leaveToConfirm)' : 'Open stop';
+      onTap = () => setState(() => _cardOpen = true);
+    }
+    return [
+      if (leaveToConfirm > 0 && kids.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Text('$leaveToConfirm on leave here - tap the card to confirm',
+              style: const TextStyle(fontSize: 11.5, color: MonitorColors.byParent, fontWeight: FontWeight.w600)),
+        ),
+      const SizedBox(height: 8),
+      Row(children: [
+        Expanded(
+          child: SizedBox(
+            height: 42,
+            child: FilledButton.icon(
+              onPressed: onTap,
+              icon: Icon(kids.isEmpty ? Icons.unfold_more_rounded : Icons.check_rounded, size: 18),
+              label: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5)),
+              style: FilledButton.styleFrom(
+                backgroundColor: kids.isEmpty ? (leaveToConfirm > 0 ? MonitorColors.byParent : w.color) : (type == 'dropoff' ? MonitorColors.green : w.color),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ),
+        ),
+        if (f != null && f.phone.isNotEmpty) ...[
+          const SizedBox(width: 8),
+          _roundTool(Icons.call_rounded, 'Call', () => actions.call(f.phone)),
+        ],
+        if (f != null && f.hasCoords) ...[
+          const SizedBox(width: 8),
+          _roundTool(Icons.directions_rounded, 'Directions', () => actions.directions(f)),
+        ],
+      ]),
+    ];
+  }
+
+  Widget _roundTool(IconData icon, String tip, VoidCallback onTap) => Tooltip(
+        message: tip,
+        child: Material(
+          color: const Color(0xFFF1F5F9),
+          borderRadius: BorderRadius.circular(12),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: onTap,
+            child: SizedBox(width: 42, height: 42, child: Icon(icon, color: MonitorColors.navy, size: 20)),
+          ),
+        ),
+      );
 
   // ---------------------------------------------------------------------------------------- list view
 
@@ -1011,46 +1143,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     });
     _say('${s.title} is next.');
     _maybePlan();
-    if (!_listMode && _sheet.isAttached) _sheet.animateTo(0.6, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
-  }
-
-  Widget _stopHeader(_Stop s, ShiftWindow w, Map<String, DateTime> etas) {
-    final idx = _planKeys.indexOf(s.key);
-    final reach = _reach(etas, s);
-    final total = _planKeys.length;
-    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      Row(children: [
-        Text(s.school ? 'NEXT · SCHOOL' : 'NEXT STOP${idx >= 0 && total > 1 ? '  ·  $total stops left' : ''}',
-            style: TextStyle(color: w.color, fontSize: 10.5, fontWeight: FontWeight.w800, letterSpacing: .6)),
-        const Spacer(),
-        if (reach.isNotEmpty)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(color: w.color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(20)),
-            child: Text(reach, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: w.color)),
-          ),
-      ]),
-      const SizedBox(height: 8),
-      Row(children: [
-        Container(
-          width: 38,
-          height: 38,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(color: w.color, shape: BoxShape.circle),
-          child: s.school
-              ? const Icon(Icons.school_rounded, size: 19, color: Colors.white)
-              : Text(idx >= 0 ? '${idx + 1}' : '•', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15)),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(s.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, height: 1.2)),
-            Text([s.subtitle, _away(s)].where((t) => t.isNotEmpty).join('  ·  '), maxLines: 2, overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 12, color: MonitorColors.muted)),
-          ]),
-        ),
-      ]),
-    ]);
+    if (!_listMode) setState(() => _cardOpen = true);
   }
 
   /// What to do with this child at this stop: label, event, colour. Null when nothing is needed.
