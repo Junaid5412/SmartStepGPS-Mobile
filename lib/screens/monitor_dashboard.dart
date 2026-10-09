@@ -11,7 +11,6 @@ import 'monitor/monitor_actions.dart';
 import 'monitor/monitor_home.dart';
 import 'monitor/monitor_profile.dart';
 import 'monitor/monitor_route_view.dart';
-import 'monitor/monitor_shift_view.dart';
 import 'monitor/monitor_store.dart';
 import 'terms_screen.dart';
 
@@ -60,7 +59,7 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
 
   void _openShift(String key) => setState(() {
         _shiftKey = key;
-        _tab = 2; // Attendance
+        _tab = 1; // Shift
       });
 
   Future<void> _logout() async {
@@ -162,8 +161,7 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
 
   static const _destinations = [
     (Icons.home_outlined, Icons.home_rounded, 'Home'),
-    (Icons.map_outlined, Icons.map_rounded, 'Route'),
-    (Icons.fact_check_outlined, Icons.fact_check_rounded, 'Attendance'),
+    (Icons.route_outlined, Icons.route_rounded, 'Shift'),
     (Icons.campaign_outlined, Icons.campaign_rounded, 'Notices'),
     (Icons.person_outline_rounded, Icons.person_rounded, 'Profile'),
   ];
@@ -183,10 +181,11 @@ class _MonitorDashboardState extends State<MonitorDashboard> {
             index: _tab,
             children: [
               MonitorHome(store: _store, onOpenShift: _openShift, onCall: actions.call),
-              // GPS runs only while this tab is the one showing.
-              MonitorRouteView(store: _store, active: _tab == 1),
-              MonitorShiftView(
+              // The one place attendance is marked: map or list while a shift is open, the
+              // countdown when it is not. Location is followed only while this tab is showing.
+              MonitorRouteView(
                 store: _store,
+                active: _tab == 1,
                 shiftKey: shiftKey,
                 onSwitchShift: (k) => setState(() => _shiftKey = k),
               ),

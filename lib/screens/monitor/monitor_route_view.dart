@@ -4,29 +4,46 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vector_map_tiles/vector_map_tiles.dart';
 
 import '../../services/api_service.dart';
 import '../../services/offline_map.dart';
 import 'monitor_actions.dart';
+import 'monitor_shift_view.dart';
 import 'monitor_store.dart';
 import 'monitor_widgets.dart';
 import 'route_planner.dart';
 
-/// The Route tab: a live map of the shift - where the bus is, every stop in the best order, the next
-/// one highlighted - and a small panel at the bottom to mark the children at the stop she is at.
+/// The Shift tab - the ONE place attendance is marked. While a shift is open it shows the stops in
+/// the best order, either on a live MAP or as a LIST (a switch at the top, remembered per phone);
+/// both use the same stops, order and buttons. When no shift is open it shows the countdown.
 ///
+/// WHERE THE BUS IS: the bus's own GPS tracker is the truth - it is in the bus. The monitor's phone
+/// is shown too (a small blue dot) and takes over whenever the tracker has gone quiet (no signal),
+/// so the page keeps working either way.
+///
+/// - The next stop is always the NEAREST unfinished one; the rest follow in the shortest order
+///   (RoutePlanner), re-worked when a stop is done, when the nearest changes, or every minute.
+/// - Every stop shows when the bus should reach it ("Reach 7:45 AM").
 /// - Stops whose children are all on leave for this trip are greyed out and left off the route.
-/// - The order is the shortest drive (RoutePlanner), and is re-worked when a stop is done, when she
-///   goes to a different stop than planned, or every minute while driving.
-/// - Arriving within [_arriveM] of any stop opens it, so she can go in whatever order she likes.
-/// - The bus arrow glides between GPS fixes at the screen's refresh rate; only that layer redraws.
-/// - GPS runs only while this tab is showing and a shift is open.
+/// - Arriving within [_arriveM] of any stop opens it, whatever the plan said.
+/// - The bus arrow glides between fixes at the screen's refresh rate; only that layer redraws.
+/// - Location is followed only while this tab is showing and a shift is open.
 class MonitorRouteView extends StatefulWidget {
   final MonitorStore store;
   final bool active;
-  const MonitorRouteView({super.key, required this.store, required this.active});
+  final String? shiftKey; // for the closed-shift view's Morning / Evening switch
+  final ValueChanged<String> onSwitchShift;
+  const MonitorRouteView({
+    super.key,
+    required this.store,
+    required this.active,
+    required this.shiftKey,
+    required this.onSwitchShift,
+  });
 
   @override
   State<MonitorRouteView> createState() => _MonitorRouteViewState();
@@ -54,30 +71,41 @@ class _Fix {
 
 class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerProviderStateMixin {
   static const _arriveM = 70.0;
+  static const _trackerFreshSec = 60; // older than this, the tracker has lost signal
+  static const _phoneFreshSec = 30;
+  static const _dwellSec = 40; // time spent at each stop, for the arrival times
   static const _doha = LatLng(25.2854, 51.5310);
+  static const _prefMode = 'monitor_shift_view';
 
   final _map = MapController();
   final _sheet = DraggableScrollableController();
   Widget? _tiles;
   bool _mapReady = false;
-  bool _fitted = false; // the whole route shown once, before the first GPS fix arrives
+  bool _fitted = false;
+  bool _listMode = false;
+  bool _showDone = false;
 
-  // ---- position -----------------------------------------------------------------------------------
+  // ---- where the bus is ---------------------------------------------------------------------------
   StreamSubscription<Position>? _gps;
   Timer? _trackerPoll;
-  LatLng? _pos; // latest real fix
+  LatLng? _busPos; // the tracker
+  DateTime? _busAt;
+  LatLng? _phonePos; // the monitor's phone
+  DateTime? _phoneAt;
+  LatLng? _bestPrev;
   double _heading = 0;
-  bool _usingTracker = false;
-  String? _gpsProblem;
-  final ValueNotifier<_Fix?> _shown = ValueNotifier(null); // the animated arrow
+  final ValueNotifier<_Fix?> _shown = ValueNotifier(null); // the gliding bus arrow
+  final ValueNotifier<LatLng?> _phoneDot = ValueNotifier(null);
   late final AnimationController _glide;
   LatLng? _glideFrom, _glideTo;
   double _headFrom = 0, _headTo = 0;
+  DateTime _lastTarget = DateTime.now();
   bool _follow = true;
 
-  // ---- route --------------------------------------------------------------------------------------
+  // ---- the route ----------------------------------------------------------------------------------
   RoutePlan? _plan;
-  List<String> _planKeys = []; // stop keys in planned order
+  List<String> _planKeys = [];
+  final Map<String, double> _legSec = {}; // road time to each stop from the one before it
   String _planSig = '';
   DateTime _planAt = DateTime.fromMillisecondsSinceEpoch(0);
   LatLng? _planFrom;
@@ -86,6 +114,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
   final Set<String> _skipped = {};
   String? _banner;
   Timer? _bannerTimer;
+  Timer? _clock; // arrival times move with the clock
 
   MonitorStore get store => widget.store;
 
@@ -102,6 +131,9 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
             maximumZoom: 20,
           ));
     }).catchError((Object e) => debugPrint('Offline map failed to load: $e'));
+    SharedPreferences.getInstance().then((p) {
+      if (mounted) setState(() => _listMode = p.getString(_prefMode) == 'list');
+    });
     store.addListener(_onStore);
     _syncTracking();
   }
@@ -118,6 +150,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     _stopTracking();
     _glide.dispose();
     _shown.dispose();
+    _phoneDot.dispose();
     _bannerTimer?.cancel();
     _sheet.dispose();
     super.dispose();
@@ -133,59 +166,71 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     if (mounted) _maybePlan();
   }
 
-  // ---------------------------------------------------------------------------------------- tracking
+  void _setMode(bool list) {
+    setState(() => _listMode = list);
+    SharedPreferences.getInstance().then((p) => p.setString(_prefMode, list ? 'list' : 'map'));
+  }
+
+  // ---------------------------------------------------------------------------------------- location
 
   void _syncTracking() {
     final want = widget.active && _shift != null;
-    if (want && _gps == null && _trackerPoll == null) {
+    if (want && _trackerPoll == null) {
       _startTracking();
-    } else if (!want && (_gps != null || _trackerPoll != null)) {
+    } else if (!want && _trackerPoll != null) {
       _stopTracking();
     }
   }
 
-  Future<void> _startTracking() async {
+  void _startTracking() {
+    // 1. The bus tracker - the real position of the bus - every 5 seconds.
+    if (store.busDeviceId > 0) {
+      _pollTracker();
+      _trackerPoll = Timer.periodic(const Duration(seconds: 5), (_) => _pollTracker());
+    } else {
+      _trackerPoll = Timer.periodic(const Duration(hours: 1), (_) {}); // marks tracking as running
+    }
+    // 2. The monitor's phone - shown, and used whenever the tracker has no signal.
+    _startPhone();
+    // 3. Arrival times count down with the clock.
+    _clock = Timer.periodic(const Duration(seconds: 20), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  Future<void> _startPhone() async {
     try {
-      if (!await Geolocator.isLocationServiceEnabled()) throw 'Location is turned off';
+      if (!await Geolocator.isLocationServiceEnabled()) return;
       var perm = await Geolocator.checkPermission();
       if (perm == LocationPermission.denied) perm = await Geolocator.requestPermission();
-      if (perm == LocationPermission.denied || perm == LocationPermission.deniedForever) throw 'Location permission denied';
-      if (!mounted || !widget.active) return;
+      if (perm == LocationPermission.denied || perm == LocationPermission.deniedForever) return;
+      if (!mounted || _trackerPoll == null) return;
       _gps = Geolocator.getPositionStream(
         locationSettings: const LocationSettings(accuracy: LocationAccuracy.bestForNavigation, distanceFilter: 2),
       ).listen((p) {
-        final speed = p.speed; // m/s
-        final heading = (speed > 1.2 && p.heading >= 0) ? p.heading : null;
-        _onFix(LatLng(p.latitude, p.longitude), heading);
-      }, onError: (Object e) => _useTracker('$e'));
-      setState(() => _gpsProblem = null);
+        _phonePos = LatLng(p.latitude, p.longitude);
+        _phoneAt = DateTime.now();
+        _phoneDot.value = _phonePos;
+        _onAnyFix();
+      }, onError: (Object e) => debugPrint('Phone location: $e'));
     } catch (e) {
-      _useTracker('$e');
+      debugPrint('Phone location unavailable: $e'); // the tracker alone still drives the page
     }
   }
 
-  /// No phone GPS: show the bus's own tracker instead, every 10 seconds.
-  void _useTracker(String why) {
-    _gps?.cancel();
-    _gps = null;
-    if (!mounted) return;
-    setState(() {
-      _gpsProblem = why;
-      _usingTracker = true;
-    });
-    if (store.busDeviceId <= 0 || _trackerPoll != null) return;
-    Future<void> poll() async {
-      try {
-        final r = await ApiService.getBusLocation(store.busDeviceId);
-        final loc = r['location'] ?? r['last_known_location'];
-        if (loc is Map && loc['lat'] != null && loc['lng'] != null) {
-          _onFix(LatLng((loc['lat'] as num).toDouble(), (loc['lng'] as num).toDouble()), null);
-        }
-      } catch (_) {/* try again next tick */}
-    }
-
-    poll();
-    _trackerPoll = Timer.periodic(const Duration(seconds: 10), (_) => poll());
+  Future<void> _pollTracker() async {
+    try {
+      final r = await ApiService.getBusLocation(store.busDeviceId);
+      final loc = r['location'] ?? r['last_known_location'];
+      if (loc is! Map || loc['lat'] == null || loc['lng'] == null) return;
+      final p = LatLng((loc['lat'] as num).toDouble(), (loc['lng'] as num).toDouble());
+      // The fix's own time (Qatar time, like this phone) - so a tracker repeating an old position
+      // while it has no signal is recognised as stale, not as a bus standing still.
+      final at = DateTime.tryParse('${loc['updated_at'] ?? ''}'.replaceFirst(' ', 'T')) ?? DateTime.now();
+      _busPos = p;
+      _busAt = at;
+      _onAnyFix();
+    } catch (_) {/* next poll */}
   }
 
   void _stopTracking() {
@@ -193,28 +238,50 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     _gps = null;
     _trackerPoll?.cancel();
     _trackerPoll = null;
+    _clock?.cancel();
+    _clock = null;
   }
 
-  void _onFix(LatLng p, double? heading) {
+  bool get _trackerFresh => _busAt != null && DateTime.now().difference(_busAt!).inSeconds.abs() <= _trackerFreshSec;
+  bool get _phoneFresh => _phoneAt != null && DateTime.now().difference(_phoneAt!).inSeconds <= _phoneFreshSec;
+
+  /// The bus position to use: the tracker while it is reporting, otherwise the monitor's phone.
+  LatLng? get _best {
+    if (_trackerFresh) return _busPos;
+    if (_phoneFresh) return _phonePos;
+    return _busPos ?? _phonePos;
+  }
+
+  String get _sourceLabel {
+    if (_trackerFresh) return 'Bus tracker · live';
+    if (_phoneFresh) return 'Tracker offline · using your phone';
+    if (_busPos != null) return 'Tracker last seen ${_busAt == null ? '' : DateFormat('h:mm a').format(_busAt!)}';
+    return 'Finding the bus…';
+  }
+
+  void _onAnyFix() {
     if (!mounted) return;
-    final prev = _pos;
-    _pos = p;
-    if (heading != null) {
-      _heading = heading;
-    } else if (prev != null && RoutePlanner.meters(prev, p) > 8) {
-      _heading = RoutePlanner.bearing(prev, p);
-    }
-    // Glide from where the arrow is drawn now to the new fix over about the time until the next one.
+    final p = _best;
+    if (p == null) return;
+    final prev = _bestPrev;
+    if (prev != null && RoutePlanner.meters(prev, p) < 1) return; // nothing moved
+    _bestPrev = p;
+    if (prev != null && RoutePlanner.meters(prev, p) > 6) _heading = RoutePlanner.bearing(prev, p);
+
+    // Glide over about the time since the last new position (tracker ~5 s, phone ~1 s).
+    final gap = DateTime.now().difference(_lastTarget).inMilliseconds.clamp(600, 5000);
+    _lastTarget = DateTime.now();
     final cur = _shown.value;
     _glideFrom = cur?.pos ?? p;
     _glideTo = p;
     _headFrom = cur?.heading ?? _heading;
     _headTo = _heading;
+    _glide.duration = Duration(milliseconds: gap);
     _glide.forward(from: 0);
 
     _checkArrival(p);
     _maybePlan();
-    if (prev == null && mounted) setState(() {}); // first fix: distances appear
+    if (prev == null) setState(() {});
   }
 
   void _onGlide() {
@@ -226,10 +293,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     if (dh > 180) dh -= 360;
     final head = (_headFrom + dh * t) % 360;
     _shown.value = _Fix(pos, head);
-    if (_follow && _mapReady) {
-      // Heading up, a little ahead of the bus, at whatever zoom she chose.
-      _map.moveAndRotate(pos, _map.camera.zoom, -head);
-    }
+    if (_follow && _mapReady && !_listMode) _map.moveAndRotate(pos, _map.camera.zoom, -head);
   }
 
   // ---------------------------------------------------------------------------------------- stops
@@ -246,7 +310,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     if (!morning) {
       final atSchool = store.students.where((s) => store.stageOf(s, shift) == Stage.waiting).toList();
       final needs = atSchool.where((s) => !_hasNotice(s, shift)).toList();
-      out.add(_Stop('school', store.schoolName, needs.isEmpty ? 'Everyone has boarded' : '${needs.length} to board',
+      out.add(_Stop('school', store.schoolName, needs.isEmpty ? 'Everyone has boarded' : '${needs.length} to board here',
           sp, null, atSchool, needs.isEmpty ? _St.done : _St.todo, school: true));
     }
 
@@ -257,11 +321,9 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
       final allLeave = f.students.every((s) => _hasNotice(s, shift) && store.stageOf(s, shift) == Stage.waiting);
       final _St st;
       if (morning) {
-        // A stop to make while a child is still to be picked up (leave children are not).
         final need = waiting.where((s) => !_hasNotice(s, shift)).length;
         st = need > 0 ? _St.todo : (allLeave ? _St.leave : _St.done);
       } else {
-        // In the evening, a stop to make while a child is on the bus to be dropped there.
         st = onBus.isNotEmpty ? _St.todo : (allLeave ? _St.leave : _St.done);
       }
       final pt = f.hasCoords ? LatLng(double.parse('${f.stopLat}'), double.parse('${f.stopLng}')) : null;
@@ -272,26 +334,37 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     if (morning) {
       final onBus = store.students.where((s) => store.stageOf(s, shift) == Stage.onBus).toList();
       final homesLeft = out.any((s) => s.state == _St.todo);
-      out.add(_Stop('school', store.schoolName, onBus.isEmpty ? (homesLeft ? 'Drop everyone here' : 'Everyone is at school') : '${onBus.length} on the bus',
+      out.add(_Stop('school', store.schoolName,
+          onBus.isEmpty ? (homesLeft ? 'Everyone gets off here' : 'Everyone is at school') : '${onBus.length} on the bus',
           sp, null, onBus, (onBus.isEmpty && !homesLeft) ? _St.done : _St.todo, school: true));
     }
     return out;
   }
 
-  /// The stop to deal with now: the one she is at or chose, else the first in the planned order.
-  _Stop? _next(List<_Stop> stops) {
+  /// The nearest unfinished stop to where the bus is (the school only once it is the stop to make).
+  _Stop? _nearest(List<_Stop> stops, ShiftWindow w) {
+    final at = _best;
+    final todo = stops.where((s) => s.state == _St.todo && !_skipped.contains(s.key)).toList();
+    if (todo.isEmpty) return null;
+    // Evening: boarding at school comes first; morning: school comes last.
+    if (!w.isMorning) {
+      final school = todo.where((s) => s.school).firstOrNull;
+      if (school != null) return school;
+    }
+    final homes = todo.where((s) => !s.school).toList();
+    final pool = homes.isNotEmpty ? homes : todo;
+    if (at == null) return pool.first;
+    final located = pool.where((s) => s.point != null).toList();
+    if (located.isEmpty) return pool.first;
+    located.sort((a, b) => RoutePlanner.meters(at, a.point!).compareTo(RoutePlanner.meters(at, b.point!)));
+    return located.first;
+  }
+
+  /// The stop to deal with now: the one she is at or chose, else the nearest.
+  _Stop? _next(List<_Stop> stops, ShiftWindow w) {
     final todo = {for (final s in stops) if (s.state == _St.todo) s.key: s};
     if (_activeKey != null && todo.containsKey(_activeKey)) return todo[_activeKey];
-    for (final k in _planKeys) {
-      if (todo.containsKey(k) && !_skipped.contains(k)) return todo[k];
-    }
-    for (final k in _planKeys) {
-      if (todo.containsKey(k)) return todo[k];
-    }
-    // Not planned yet (or no location): the morning school stop only once homes are done.
-    final homes = todo.values.where((s) => !s.school).toList();
-    if (homes.isNotEmpty) return homes.first;
-    return todo.values.isEmpty ? null : todo.values.first;
+    return _nearest(stops, w) ?? (todo.isEmpty ? null : todo.values.first);
   }
 
   void _checkArrival(LatLng p) {
@@ -308,14 +381,11 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
       }
     }
     if (hit == null || hit.key == _activeKey) return;
-    final planned = _next(_stops(w));
     setState(() => _activeKey = hit!.key);
-    if (planned != null && planned.key != hit.key) {
-      _say('Route updated - you are at ${hit.title}.');
-      _planSig = ''; // re-plan from here
-    }
-    if (_sheet.isAttached && _sheet.size < 0.3) {
-      _sheet.animateTo(0.42, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+    _say('Arrived at ${hit.title}.');
+    _planSig = '';
+    if (!_listMode && _sheet.isAttached && _sheet.size < 0.3) {
+      _sheet.animateTo(0.48, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
     }
   }
 
@@ -332,36 +402,40 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
   Future<void> _maybePlan() async {
     final w = _shift;
     if (w == null || _planning) return;
-    final start = _pos ?? (store.schoolLat != null ? LatLng(store.schoolLat!, store.schoolLng!) : null);
+    final start = _best ?? (store.schoolLat != null ? LatLng(store.schoolLat!, store.schoolLng!) : null);
     if (start == null) return;
     final stops = _stops(w);
     final todo = stops.where((s) => s.state == _St.todo && s.point != null).toList();
-    final sig = '${w.key}|${todo.map((s) => s.key).join(',')}|$_activeKey';
+    final first = _next(stops, w);
+    final sig = '${w.key}|${todo.map((s) => s.key).join(',')}|${first?.key}';
     final moved = _planFrom == null ? 1e9 : RoutePlanner.meters(_planFrom!, start);
     final age = DateTime.now().difference(_planAt);
-    final stale = sig != _planSig || (age > const Duration(seconds: 60) && moved > 300);
-    if (!stale || (sig == _planSig && age < const Duration(seconds: 15))) return;
+    // Re-plan when the stops or the next stop change, or every minute while the bus is moving -
+    // but never more than every 15 seconds, to stay gentle with the free routing service.
+    final changed = sig != _planSig;
+    final drifting = age > const Duration(seconds: 60) && moved > 300;
+    if (!changed && !drifting) return;
+    if (_planSig.isNotEmpty && age < const Duration(seconds: 15)) return;
 
     _planning = true;
     try {
-      // The morning ends at school; the evening starts there, so a waiting school stop goes first.
-      final schoolStop = todo.where((s) => s.school).toList();
-      final homes = todo.where((s) => !s.school).toList();
-      final first = _activeKey == null ? null : homes.where((s) => s.key == _activeKey).firstOrNull;
-      final rest = homes.where((s) => s != first).toList();
-      LatLng from = start;
-      final lead = <_Stop>[];
-      if (!w.isMorning && schoolStop.isNotEmpty) lead.add(schoolStop.first);
-      if (first != null) lead.add(first);
-      if (lead.isNotEmpty) from = lead.last.point!;
-      final end = w.isMorning && schoolStop.isNotEmpty ? schoolStop.first.point : null;
+      // The nearest stop first, then the shortest drive through the rest; the morning ends at school.
+      final lead = <_Stop>[if (first != null && first.point != null) first];
+      final schoolStop = todo.where((s) => s.school).firstOrNull;
+      final end = (w.isMorning && schoolStop != null && first != schoolStop) ? schoolStop : null;
+      final rest = todo.where((s) => !lead.contains(s) && s != end).toList();
+      final from = lead.isNotEmpty ? lead.last.point! : start;
 
-      final plan = await RoutePlanner.plan(from, [for (final s in rest) s.point!], end: end);
+      final plan = await RoutePlanner.plan(from, [for (final s in rest) s.point!], end: end?.point);
       if (!mounted) return;
-      final keys = [...lead.map((s) => s.key), for (final i in plan.order) rest[i].key, if (end != null) schoolStop.first.key];
-      final line = [start, for (final s in lead) s.point!, ...plan.line];
+      final keys = [...lead.map((s) => s.key), for (final i in plan.order) rest[i].key, if (end != null) end.key];
+      _legSec.clear();
+      for (var i = 0; i < plan.order.length && i < plan.legSeconds.length; i++) {
+        _legSec[rest[plan.order[i]].key] = plan.legSeconds[i];
+      }
+      if (end != null && plan.legSeconds.length > plan.order.length) _legSec[end.key] = plan.legSeconds[plan.order.length];
       setState(() {
-        _plan = RoutePlan(plan.order, line, plan.legMeters, plan.legSeconds, plan.road);
+        _plan = RoutePlan(plan.order, [start, for (final s in lead) s.point!, ...plan.line], plan.legMeters, plan.legSeconds, plan.road);
         _planKeys = keys;
         _planSig = sig;
         _planAt = DateTime.now();
@@ -372,35 +446,141 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     }
   }
 
+  /// Town driving speed, from the road plan when there is one.
+  double get _mps {
+    final p = _plan;
+    if (p != null && p.road) {
+      final m = p.legMeters.fold<double>(0, (a, b) => a + b), s = p.legSeconds.fold<double>(0, (a, b) => a + b);
+      if (s > 0) return (m / s).clamp(4.0, 20.0);
+    }
+    return 28 / 3.6;
+  }
+
+  /// When the bus should reach each stop still to do, in Qatar time (this phone's clock).
+  Map<String, DateTime> _etas(List<_Stop> stops) {
+    final out = <String, DateTime>{};
+    final at = _best;
+    if (at == null) return out;
+    final byKey = {for (final s in stops) if (s.state == _St.todo && s.point != null) s.key: s};
+    var t = DateTime.now();
+    LatLng prev = at;
+    var first = true;
+    for (final k in _planKeys) {
+      final s = byKey[k];
+      if (s == null) continue;
+      final secs = first || _legSec[k] == null ? RoutePlanner.meters(prev, s.point!) * 1.3 / _mps : _legSec[k]!;
+      t = t.add(Duration(seconds: secs.round()));
+      out[k] = t;
+      t = t.add(const Duration(seconds: _dwellSec));
+      prev = s.point!;
+      first = false;
+    }
+    return out;
+  }
+
+  String _away(_Stop s) {
+    if (s.point == null) return 'No location saved';
+    final p = _best;
+    if (p == null) return '';
+    final m = RoutePlanner.meters(p, s.point!);
+    if (m < _arriveM) return 'You are here';
+    final road = m * 1.3;
+    return road < 1000 ? '${(road / 10).round() * 10} m' : '${(road / 1000).toStringAsFixed(1)} km';
+  }
+
+  String _reach(Map<String, DateTime> etas, _Stop s) {
+    final t = etas[s.key];
+    if (t == null) return '';
+    if (s.point != null && _best != null && RoutePlanner.meters(_best!, s.point!) < _arriveM) return 'Here now';
+    return 'Reach ${DateFormat('h:mm a').format(t)}';
+  }
+
   // ---------------------------------------------------------------------------------------- build
 
   @override
   Widget build(BuildContext context) {
     final w = _shift;
-    if (w == null) return _closed();
+    if (w == null) {
+      final key = widget.shiftKey ?? store.focus?.key;
+      if (key == null || store.window(key) == null) return const Center(child: CircularProgressIndicator());
+      return MonitorShiftView(store: store, shiftKey: key, onSwitchShift: widget.onSwitchShift);
+    }
     final stops = _stops(w);
-    final next = _next(stops);
-    if (_planSig.isEmpty || !stops.any((s) => s.key == next?.key)) {
+    final next = _next(stops, w);
+    if (_planSig.isEmpty || (next != null && !_planKeys.contains(next.key))) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _maybePlan());
     }
+    final etas = _etas(stops);
     final done = stops.where((s) => !s.school && s.state == _St.done).length;
     final homes = stops.where((s) => !s.school && s.state != _St.leave).length;
-    final center = _pos ?? stops.firstWhere((s) => s.point != null, orElse: () => _Stop('', '', '', _doha, null, const [], _St.todo)).point!;
-    // Until the bus's position is known, show the whole route rather than one stop.
-    if (!_fitted && _pos == null && _mapReady) {
+
+    return Column(children: [
+      _topBar(w, done, homes),
+      Expanded(child: _listMode ? _list(w, stops, next, etas) : _mapView(w, stops, next, etas)),
+    ]);
+  }
+
+  Widget _topBar(ShiftWindow w, int done, int homes) => Material(
+        color: w.color,
+        child: SafeArea(
+          bottom: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 12, 10),
+            child: Row(children: [
+              Icon(w.icon, color: Colors.amberAccent, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('${w.name} shift', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
+                  Text('$done of $homes stops done · closes ${fmtTime(w.closesAt)}',
+                      maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                ]),
+              ),
+              Container(
+                padding: const EdgeInsets.all(3),
+                decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.18), borderRadius: BorderRadius.circular(12)),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  _modeBtn(Icons.map_rounded, 'Map', !_listMode, () => _setMode(false), w),
+                  _modeBtn(Icons.view_list_rounded, 'List', _listMode, () => _setMode(true), w),
+                ]),
+              ),
+            ]),
+          ),
+        ),
+      );
+
+  Widget _modeBtn(IconData i, String t, bool on, VoidCallback tap, ShiftWindow w) => InkWell(
+        onTap: tap,
+        borderRadius: BorderRadius.circular(9),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(color: on ? Colors.white : Colors.transparent, borderRadius: BorderRadius.circular(9)),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(i, size: 16, color: on ? w.color : Colors.white),
+            const SizedBox(width: 4),
+            Text(t, style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: on ? w.color : Colors.white)),
+          ]),
+        ),
+      );
+
+  // ---------------------------------------------------------------------------------------- map view
+
+  Widget _mapView(ShiftWindow w, List<_Stop> stops, _Stop? next, Map<String, DateTime> etas) {
+    final center = _best ?? stops.firstWhere((s) => s.point != null, orElse: () => _Stop('', '', '', _doha, null, const [], _St.todo)).point!;
+    if (!_fitted && _best == null && _mapReady) {
       final pts = [for (final s in stops) if (s.point != null && s.state != _St.done) s.point!];
       if (pts.length > 1) {
         _fitted = true;
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
+          if (!mounted || _listMode) return;
           _map.fitCamera(CameraFit.coordinates(
             coordinates: pts,
-            padding: EdgeInsets.fromLTRB(40, MediaQuery.of(context).padding.top + 70, 70, MediaQuery.of(context).size.height * 0.25),
+            padding: EdgeInsets.fromLTRB(40, 70, 70, MediaQuery.of(context).size.height * 0.25),
           ));
         });
       }
     }
-
     return Stack(children: [
       FlutterMap(
         mapController: _map,
@@ -429,6 +609,28 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
                   child: GestureDetector(onTap: () => _choose(s), child: _pin(s, next, w)),
                 ),
           ]),
+          // The monitor's phone: a small blue dot.
+          ValueListenableBuilder<LatLng?>(
+            valueListenable: _phoneDot,
+            builder: (context, p, _) => p == null
+                ? const SizedBox.shrink()
+                : MarkerLayer(markers: [
+                    Marker(
+                      point: p,
+                      width: 20,
+                      height: 20,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF2563EB),
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 3),
+                          boxShadow: const [BoxShadow(color: Color(0x33000000), blurRadius: 4)],
+                        ),
+                      ),
+                    ),
+                  ]),
+          ),
+          // The bus - from its tracker - gliding.
           ValueListenableBuilder<_Fix?>(
             valueListenable: _shown,
             builder: (context, f, _) => f == null
@@ -443,36 +645,37 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
                   ]),
           ),
           const Align(
-            alignment: Alignment.topLeft,
+            alignment: Alignment.bottomLeft,
             child: Padding(
-              padding: EdgeInsets.fromLTRB(8, 56, 8, 8),
+              padding: EdgeInsets.fromLTRB(8, 8, 8, 4),
               child: Text('© OpenStreetMap', style: TextStyle(fontSize: 9, color: Color(0xFF64748B))),
             ),
           ),
         ],
       ),
-
-      // Top: the shift and progress, and the clock.
       Positioned(
-        top: MediaQuery.of(context).padding.top + 10,
+        top: 10,
         left: 12,
-        right: 12,
-        child: Row(children: [
-          _glass(Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(w.icon, size: 16, color: w.color),
+        right: 64,
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: _glass(Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(_trackerFresh ? Icons.directions_bus_rounded : Icons.smartphone_rounded, size: 15,
+                color: _trackerFresh ? MonitorColors.green : MonitorColors.amber),
             const SizedBox(width: 6),
-            Text('${w.name} · $done of $homes stops', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+            Flexible(child: Text(_sourceLabel, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700))),
+            if (_plan != null && !_plan!.road) ...[
+              const SizedBox(width: 8),
+              const Text('· estimated route', style: TextStyle(fontSize: 11.5, color: MonitorColors.muted)),
+            ],
           ])),
-          const Spacer(),
-          if (_plan != null && !_plan!.road)
-            _glass(const Text('Estimated route', style: TextStyle(fontSize: 11.5, color: MonitorColors.muted))),
-        ]),
+        ),
       ),
       Positioned(
         right: 12,
-        top: MediaQuery.of(context).padding.top + 58,
+        top: 10,
         child: Column(children: [
-          _fab(_follow ? Icons.navigation_rounded : Icons.navigation_outlined, _follow ? 'Following' : 'Follow the bus', () {
+          _fab(_follow ? Icons.navigation_rounded : Icons.navigation_outlined, _follow ? 'Following the bus' : 'Follow the bus', () {
             setState(() => _follow = true);
             final f = _shown.value;
             if (f != null && _mapReady) _map.moveAndRotate(f.pos, math.max(_map.camera.zoom, 16), -f.heading);
@@ -483,28 +686,24 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
           }),
         ]),
       ),
-      if (_banner != null || _gpsProblem != null)
+      if (_banner != null)
         Positioned(
-          top: MediaQuery.of(context).padding.top + 58,
+          top: 52,
           left: 12,
           right: 64,
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
             decoration: BoxDecoration(color: MonitorColors.navy, borderRadius: BorderRadius.circular(12)),
-            child: Text(
-              _banner ?? (_usingTracker ? 'Phone location is off - showing the bus tracker instead.' : 'Waiting for location…'),
-              style: const TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w600),
-            ),
+            child: Text(_banner!, style: const TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w600)),
           ),
         ),
-
       DraggableScrollableSheet(
         controller: _sheet,
-        initialChildSize: 0.2,
-        minChildSize: 0.13,
+        initialChildSize: 0.22,
+        minChildSize: 0.14,
         maxChildSize: 0.88,
         snap: true,
-        snapSizes: const [0.2, 0.45],
+        snapSizes: const [0.22, 0.48],
         builder: (context, scroll) => DecoratedBox(
           decoration: const BoxDecoration(
             color: Colors.white,
@@ -515,12 +714,10 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
             controller: scroll,
             padding: const EdgeInsets.fromLTRB(14, 8, 14, 20),
             children: [
-              Center(
-                child: Container(width: 38, height: 4, decoration: BoxDecoration(color: MonitorColors.line, borderRadius: BorderRadius.circular(4))),
-              ),
+              Center(child: Container(width: 38, height: 4, decoration: BoxDecoration(color: MonitorColors.line, borderRadius: BorderRadius.circular(4)))),
               const SizedBox(height: 8),
               if (next == null) _allDone(w) else ...[
-                _stopHeader(next, w, stops),
+                _stopHeader(next, w, etas),
                 const SizedBox(height: 8),
                 _chips(next, w),
                 const SizedBox(height: 12),
@@ -531,7 +728,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
               const SizedBox(height: 14),
               const SectionTitle('All stops'),
               const SizedBox(height: 6),
-              ..._allStops(stops, next),
+              ..._compactStops(stops, next, w, etas),
             ],
           ),
         ),
@@ -539,28 +736,117 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     ]);
   }
 
-  // ---------------------------------------------------------------------------------------- pieces
+  // ---------------------------------------------------------------------------------------- list view
 
-  Widget _closed() {
-    final f = store.focus;
-    final text = f == null
-        ? 'The route opens with the shift.'
-        : f.state == 'upcoming'
-            ? 'The ${f.name.toLowerCase()} route opens at ${fmtTime(f.opensAt)}.'
-            : 'Today\'s shifts are over. See you tomorrow.';
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(28),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const IconTile(icon: Icons.route_rounded, color: MonitorColors.navy, size: 64),
-          const SizedBox(height: 14),
-          const Text('Route', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
-          const SizedBox(height: 6),
-          Text(text, textAlign: TextAlign.center, style: const TextStyle(color: MonitorColors.muted)),
-        ]),
+  Widget _list(ShiftWindow w, List<_Stop> stops, _Stop? next, Map<String, DateTime> etas) {
+    final ordered = _ordered(stops);
+    final todo = [
+      if (next != null) next,
+      ...ordered.where((s) => s.state == _St.todo && s.key != next?.key),
+    ];
+    final leave = stops.where((s) => s.state == _St.leave).toList();
+    final doneStops = stops.where((s) => s.state == _St.done).toList();
+    return RefreshIndicator(
+      onRefresh: () => store.load(silent: true),
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
+        children: [
+          PageWidth(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Row(children: [
+                  Icon(_trackerFresh ? Icons.directions_bus_rounded : Icons.smartphone_rounded, size: 15,
+                      color: _trackerFresh ? MonitorColors.green : MonitorColors.amber),
+                  const SizedBox(width: 6),
+                  Expanded(child: Text(_sourceLabel, style: const TextStyle(fontSize: 12, color: MonitorColors.muted, fontWeight: FontWeight.w600))),
+                ]),
+              ),
+              if (next == null) Padding(padding: const EdgeInsets.only(bottom: 12), child: SurfaceCard(child: _allDone(w))),
+              for (final s in todo)
+                Padding(padding: const EdgeInsets.only(bottom: 12), child: _stopCard(s, w, next?.key == s.key, etas)),
+              if (leave.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                SectionTitle('On leave - not on the route (${leave.length})'),
+                const SizedBox(height: 6),
+                for (final s in leave) Padding(padding: const EdgeInsets.only(bottom: 8), child: _stopCard(s, w, false, etas)),
+              ],
+              if (doneStops.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                InkWell(
+                  onTap: () => setState(() => _showDone = !_showDone),
+                  borderRadius: BorderRadius.circular(12),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+                    child: Row(children: [
+                      const Icon(Icons.task_alt_rounded, color: MonitorColors.green, size: 20),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text('Done (${doneStops.length})', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15))),
+                      Icon(_showDone ? Icons.expand_less_rounded : Icons.expand_more_rounded, color: MonitorColors.muted),
+                    ]),
+                  ),
+                ),
+                if (_showDone)
+                  for (final s in doneStops) Padding(padding: const EdgeInsets.only(bottom: 8), child: _stopCard(s, w, false, etas)),
+              ],
+            ]),
+          ),
+        ],
       ),
     );
   }
+
+  /// Stops in the planned order: the planned ones first, then any not planned (no location).
+  List<_Stop> _ordered(List<_Stop> stops) => [
+        for (final k in _planKeys) ...stops.where((s) => s.key == k),
+        ...stops.where((s) => !_planKeys.contains(s.key)),
+      ];
+
+  Widget _stopCard(_Stop s, ShiftWindow w, bool isNext, Map<String, DateTime> etas) {
+    final actions = MonitorActions(context, store);
+    final reach = s.state == _St.todo ? _reach(etas, s) : '';
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: isNext ? w.color : MonitorColors.line, width: isNext ? 1.6 : 1),
+      ),
+      padding: const EdgeInsets.fromLTRB(12, 10, 6, 10),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Row(children: [
+          SizedBox(width: 34, height: 34, child: _pin(s, isNext ? s : null, w)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              if (isNext)
+                Text('NEXT STOP', style: TextStyle(color: w.color, fontSize: 10.5, fontWeight: FontWeight.w800, letterSpacing: .6)),
+              Text(s.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+              Text(
+                [if (reach.isNotEmpty) reach, if (s.state == _St.todo) _away(s), if (s.state == _St.leave) 'Everyone on leave'].where((t) => t.isNotEmpty).join(' · '),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 12.5, color: isNext ? w.color : MonitorColors.muted, fontWeight: isNext ? FontWeight.w700 : FontWeight.w500),
+              ),
+            ]),
+          ),
+          if (s.family != null && s.family!.phone.isNotEmpty)
+            IconButton(tooltip: 'Call', visualDensity: VisualDensity.compact, onPressed: () => actions.call(s.family!.phone),
+                icon: const Icon(Icons.call_rounded, color: Color(0xFF1D4ED8), size: 20)),
+          if (s.family != null && s.family!.hasCoords)
+            IconButton(tooltip: 'Directions', visualDensity: VisualDensity.compact, onPressed: () => actions.directions(s.family!),
+                icon: const Icon(Icons.directions_rounded, color: MonitorColors.byParent, size: 20)),
+        ]),
+        if (s.state != _St.leave || isNext) ...[
+          const SizedBox(height: 6),
+          ..._kidRows(s, w),
+          _bulk(s, w),
+        ],
+      ]),
+    );
+  }
+
+  // ---------------------------------------------------------------------------------------- shared pieces
 
   Widget _glass(Widget child) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -637,32 +923,16 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     });
     _say('${s.title} is next.');
     _maybePlan();
-    if (_sheet.isAttached) _sheet.animateTo(0.45, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+    if (!_listMode && _sheet.isAttached) _sheet.animateTo(0.48, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
   }
 
-  String _away(_Stop s) {
-    if (s.point == null) return 'No location saved';
-    final p = _pos;
-    if (p == null) return '';
-    final m = RoutePlanner.meters(p, s.point!);
-    if (m < _arriveM) return 'You are here';
-    // Road distance is roughly 1.3 x straight; town speed from the plan when there is one.
-    final road = m * 1.3;
-    double mps = 28 / 3.6;
-    if (_plan != null && _plan!.legMeters.isNotEmpty && _plan!.legSeconds.first > 0) {
-      mps = (_plan!.legMeters.first / _plan!.legSeconds.first).clamp(4.0, 20.0);
-    }
-    final min = (road / mps / 60).ceil();
-    final dist = road < 1000 ? '${(road / 10).round() * 10} m' : '${(road / 1000).toStringAsFixed(1)} km';
-    return '$dist · $min min';
-  }
-
-  Widget _stopHeader(_Stop s, ShiftWindow w, List<_Stop> stops) {
+  Widget _stopHeader(_Stop s, ShiftWindow w, Map<String, DateTime> etas) {
     final idx = _planKeys.indexOf(s.key);
+    final reach = _reach(etas, s);
     return Row(children: [
       Container(
-        width: 30,
-        height: 30,
+        width: 32,
+        height: 32,
         alignment: Alignment.center,
         decoration: BoxDecoration(color: w.color, shape: BoxShape.circle),
         child: s.school
@@ -677,7 +947,10 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
         ]),
       ),
       const SizedBox(width: 8),
-      Text(_away(s), style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: w.color)),
+      Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+        if (reach.isNotEmpty) Text(reach, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: w.color)),
+        Text(_away(s), style: const TextStyle(fontSize: 12, color: MonitorColors.muted)),
+      ]),
     ]);
   }
 
@@ -697,14 +970,42 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     return null;
   }
 
+  /// The stop's main step for this shift, and the children it applies to (not those on leave).
+  String _mainType(_Stop s, ShiftWindow w) => w.isMorning ? (s.school ? 'dropoff' : 'pickup') : (s.school ? 'pickup' : 'dropoff');
+  List<dynamic> _mainKids(_Stop s, ShiftWindow w) => s.kids.where((k) => _action(k, s, w)?.$2 == _mainType(s, w)).toList();
+  String _mainTitle(_Stop s, ShiftWindow w) =>
+      w.isMorning ? (s.school ? 'Everyone at school' : 'All picked up') : (s.school ? 'All boarded' : 'All dropped home');
+
+  /// "All picked up (2)", "Everyone at school (6)", "All boarded (5)", "All dropped home (2)".
+  Widget _bulk(_Stop s, ShiftWindow w) {
+    final kids = _mainKids(s, w);
+    if (kids.length < 2) return const SizedBox.shrink();
+    final type = _mainType(s, w);
+    return Padding(
+      padding: const EdgeInsets.only(top: 6, right: 6),
+      child: SizedBox(
+        height: 44,
+        child: FilledButton.icon(
+          onPressed: () => MonitorActions(context, store).markMany(w, kids, type, _mainTitle(s, w)),
+          icon: const Icon(Icons.done_all_rounded),
+          label: Text('${_mainTitle(s, w)} (${kids.length})', style: const TextStyle(fontWeight: FontWeight.w700)),
+          style: FilledButton.styleFrom(
+            backgroundColor: type == 'dropoff' ? MonitorColors.green : w.color,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _chips(_Stop s, ShiftWindow w) {
     final actions = MonitorActions(context, store);
-    final kids = s.kids;
-    if (kids.isEmpty) return const Text('Nobody to mark here.', style: TextStyle(color: MonitorColors.muted));
+    if (s.kids.isEmpty) return const Text('Nobody to mark here.', style: TextStyle(color: MonitorColors.muted));
+    final main = _mainKids(s, w);
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(children: [
-        for (final k in kids)
+        for (final k in s.kids)
           Padding(
             padding: const EdgeInsets.only(right: 8),
             child: Builder(builder: (_) {
@@ -724,6 +1025,15 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
                     style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
               );
             }),
+          ),
+        if (main.length >= 2)
+          ActionChip(
+            onPressed: () => actions.markMany(w, main, _mainType(s, w), _mainTitle(s, w)),
+            backgroundColor: MonitorColors.green,
+            side: BorderSide.none,
+            shape: const StadiumBorder(),
+            avatar: const Icon(Icons.done_all_rounded, size: 16, color: Colors.white),
+            label: Text('All ${main.length}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
           ),
       ]),
     );
@@ -755,6 +1065,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
           : () => setState(() {
                 _skipped.add(s.key);
                 if (_activeKey == s.key) _activeKey = null;
+                _planSig = '';
                 _say('${s.title} skipped for now - it stays in the list.');
               })),
     ]);
@@ -765,7 +1076,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     return [
       for (final k in s.kids)
         Padding(
-          padding: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.only(bottom: 8, right: 6),
           child: Row(children: [
             Initials(name: '${k['name'] ?? '?'}', size: 34, color: w.color),
             const SizedBox(width: 10),
@@ -781,7 +1092,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
             ),
             Builder(builder: (_) {
               final a = _action(k, s, w);
-              if (a == null) return const Icon(Icons.check_circle_rounded, color: MonitorColors.green);
+              if (a == null) return Icon(StatusStyle.icon(store.eventOf(k, w.key)), color: StatusStyle.color(store.eventOf(k, w.key)));
               return Row(mainAxisSize: MainAxisSize.min, children: [
                 FilledButton(
                   onPressed: () => actions.mark(w, k, a.$2),
@@ -803,52 +1114,42 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     ];
   }
 
-  List<Widget> _allStops(List<_Stop> stops, _Stop? next) {
-    final ordered = [
-      for (final k in _planKeys) ...stops.where((s) => s.key == k),
-      ...stops.where((s) => !_planKeys.contains(s.key) && s.state == _St.todo),
-      ...stops.where((s) => !_planKeys.contains(s.key) && s.state != _St.todo),
-    ];
-    return [
-      for (final s in ordered)
-        InkWell(
-          onTap: () => _choose(s),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Row(children: [
-              SizedBox(width: 34, height: 34, child: _pin(s, next, _shift!)),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(s.title, maxLines: 1, overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontWeight: s.key == next?.key ? FontWeight.w800 : FontWeight.w600)),
-                  Text(
-                    s.state == _St.leave
-                        ? 'On leave - not on the route'
-                        : [
-                            s.kids.map((k) => '${k['name'] ?? ''}'.split(' ').first).join(', '),
-                            if (s.state == _St.todo) _away(s),
-                            if (_skipped.contains(s.key)) 'skipped',
-                          ].where((t) => t.isNotEmpty).join(' · '),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 12, color: MonitorColors.muted),
-                  ),
-                ]),
-              ),
-              if (s.state == _St.done) const Icon(Icons.check_rounded, color: MonitorColors.green, size: 20),
-            ]),
+  List<Widget> _compactStops(List<_Stop> stops, _Stop? next, ShiftWindow w, Map<String, DateTime> etas) => [
+        for (final s in _ordered(stops))
+          InkWell(
+            onTap: () => _choose(s),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Row(children: [
+                SizedBox(width: 34, height: 34, child: _pin(s, next, w)),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(s.title, maxLines: 1, overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontWeight: s.key == next?.key ? FontWeight.w800 : FontWeight.w600)),
+                    Text(
+                      s.state == _St.leave
+                          ? 'On leave - not on the route'
+                          : [
+                              s.kids.map((k) => '${k['name'] ?? ''}'.split(' ').first).join(', '),
+                              if (s.state == _St.todo) _reach(etas, s),
+                              if (_skipped.contains(s.key)) 'skipped',
+                            ].where((t) => t.isNotEmpty).join(' · '),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 12, color: MonitorColors.muted),
+                    ),
+                  ]),
+                ),
+                if (s.state == _St.done) const Icon(Icons.check_rounded, color: MonitorColors.green, size: 20),
+              ]),
+            ),
           ),
-        ),
-    ];
-  }
+      ];
 
   Widget _allDone(ShiftWindow w) => Row(children: [
         const Icon(Icons.task_alt_rounded, color: MonitorColors.green),
         const SizedBox(width: 10),
-        Expanded(
-          child: Text('${w.name} route complete - every child is accounted for.',
-              style: const TextStyle(fontWeight: FontWeight.w700)),
-        ),
+        Expanded(child: Text('${w.name} route complete - every child is accounted for.', style: const TextStyle(fontWeight: FontWeight.w700))),
       ]);
 }

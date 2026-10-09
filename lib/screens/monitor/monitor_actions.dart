@@ -57,6 +57,73 @@ class MonitorActions {
     }
   }
 
+  /// Several children at once - "All picked up" at a stop, "Everyone at school". One confirmation
+  /// that NAMES every child, so a tap cannot quietly mark someone who is not there.
+  Future<void> markMany(ShiftWindow w, List<dynamic> students, String type, String title) async {
+    if (students.isEmpty) return;
+    if (!w.isOpen) {
+      _snack(_closedText(w), MonitorColors.ink, seconds: 3);
+      return;
+    }
+    final names = students.map((s) => s['name']?.toString() ?? 'Student').toList();
+    final color = StatusStyle.color(type);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (final n in names)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 3),
+                child: Row(children: [
+                  Icon(Icons.check_circle_rounded, size: 18, color: color),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text(n, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600))),
+                ]),
+              ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: color),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text('Confirm ${names.length}'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !context.mounted) return;
+
+    final pos = await _currentPosition();
+    var done = 0;
+    String? err;
+    for (final s in students) {
+      final id = s['id'] is int ? s['id'] as int : int.tryParse('${s['id']}') ?? 0;
+      try {
+        final r = await ApiService.markAttendance(id, type, pos?.latitude, pos?.longitude, shift: w.key);
+        if (r['success'] == true) {
+          done++;
+        } else {
+          err ??= (r['error'] ?? 'Could not record').toString();
+        }
+      } catch (_) {
+        err ??= 'No connection for some children - please try them again.';
+      }
+    }
+    if (!context.mounted) return;
+    _snack(
+      err == null ? '$done marked · ${StatusStyle.label(type, w.key)}' : '$done of ${students.length} marked. $err',
+      err == null ? color : MonitorColors.red,
+      seconds: err == null ? 2 : 5,
+    );
+    await store.load(silent: true);
+  }
+
   String _closedText(ShiftWindow w) => w.state == 'upcoming'
       ? '${w.name} attendance opens at ${fmtTime(w.opensAt)}.'
       : '${w.name} attendance closed at ${fmtTime(w.closesAt)}.';
