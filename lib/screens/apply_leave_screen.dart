@@ -59,6 +59,11 @@ class _ApplyLeaveScreenState extends State<ApplyLeaveScreen> {
   List<dynamic> _leaves = [];
   bool _loading = true;
 
+  /// How much of TODAY can still change, from the server: 'open' (before the morning bus),
+  /// 'evening_only' (only "I'll pick up") or 'closed' (tomorrow onwards only).
+  String _todayState = 'open';
+  String _todayMsg = '';
+
   static const _reasons = ['Sick', 'Travel', 'Other'];
 
   @override
@@ -86,6 +91,17 @@ class _ApplyLeaveScreenState extends State<ApplyLeaveScreen> {
       setState(() {
         _leaves = ((r['requests'] as List?) ?? []).where((n) => n is Map && n['state'] == 'active').toList();
         _loading = false;
+        final t = r['today'];
+        if (t is Map) {
+          _todayState = '${t['state'] ?? 'open'}';
+          _todayMsg = '${t['message'] ?? ''}';
+        }
+        // Too late for anything today: start on tomorrow instead of a day that cannot be chosen.
+        if (_todayState == 'closed' && _day == 'today') {
+          _day = 'tomorrow';
+          _from = _to = DateTime.now().add(const Duration(days: 1));
+        }
+        if (!_choiceAllowed(_choice)) _choice = null;
       });
     } catch (_) {
       if (mounted) setState(() => _loading = false);
@@ -93,6 +109,25 @@ class _ApplyLeaveScreenState extends State<ApplyLeaveScreen> {
   }
 
   String _ymd(DateTime d) => DateFormat('yyyy-MM-dd').format(d);
+
+  bool get _includesToday => _ymd(_from) == _ymd(DateTime.now());
+
+  /// After the morning bus has gone, today can only change the evening trip ("I'll pick up").
+  bool _choiceAllowed(_Choice? c) {
+    if (c == null || !_includesToday) return true;
+    if (_todayState == 'closed') return false;
+    if (_todayState == 'evening_only') return c.morning == 'bus';
+    return true;
+  }
+
+  String _names(Iterable<int> ids) {
+    final names = [
+      for (final s in widget.students)
+        if (ids.contains(int.tryParse('${s['id']}'))) '${s['name'] ?? ''}'.split(' ').first,
+    ];
+    if (names.length <= 1) return names.join();
+    return '${names.sublist(0, names.length - 1).join(', ')} & ${names.last}';
+  }
 
   String _dayLabel(dynamic ymd) {
     final d = DateTime.tryParse('$ymd');
@@ -132,6 +167,8 @@ class _ApplyLeaveScreenState extends State<ApplyLeaveScreen> {
       err = 'Choose your child.';
     } else if (_choice == null) {
       err = 'Choose what is happening.';
+    } else if (!_choiceAllowed(_choice)) {
+      err = _todayMsg.isNotEmpty ? _todayMsg : 'Too late for today.';
     } else if (_choice!.key == 'absent' && _reason == null) {
       err = 'Choose a reason.';
     }
@@ -160,8 +197,8 @@ class _ApplyLeaveScreenState extends State<ApplyLeaveScreen> {
     if (!mounted) return;
     setState(() => _sending = false);
     if (r['success'] == true) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Leave applied. The bus monitor can see it now.'),
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Leave applied for ${_names(_kids)}. The bus monitor can see it now.'),
         backgroundColor: _C.green,
       ));
       setState(() {
@@ -241,6 +278,18 @@ class _ApplyLeaveScreenState extends State<ApplyLeaveScreen> {
                   children: [
                     if (!oneChild) ...[_childPicker(), const SizedBox(height: 14)],
                     _dayPicker(),
+                    if (_includesToday && _todayState != 'open' && _todayMsg.isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(color: const Color(0xFFFFF7ED), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFFED7AA))),
+                        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          const Icon(Icons.schedule_rounded, size: 18, color: Color(0xFFB45309)),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text(_todayMsg, style: const TextStyle(fontSize: 12.5, color: Color(0xFF92400E)))),
+                        ]),
+                      ),
+                    ],
                     const SizedBox(height: 18),
                     const Text("What's happening?",
                         style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: _C.ink)),
@@ -274,18 +323,37 @@ class _ApplyLeaveScreenState extends State<ApplyLeaveScreen> {
                         ),
                       )
                     else
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: TextButton.icon(
-                          onPressed: () => setState(() => _showNote = true),
-                          icon: const Icon(Icons.add_rounded, size: 18),
-                          label: const Text('Add note'),
-                          style: TextButton.styleFrom(foregroundColor: _C.muted, padding: EdgeInsets.zero),
+                      // The whole line opens the note, not just the words.
+                      InkWell(
+                        onTap: () => setState(() => _showNote = true),
+                        borderRadius: BorderRadius.circular(12),
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: _C.line),
+                          ),
+                          child: const Row(children: [
+                            Icon(Icons.edit_note_rounded, size: 20, color: _C.muted),
+                            SizedBox(width: 10),
+                            Expanded(child: Text('Add a note for the monitor (optional)', style: TextStyle(color: _C.muted, fontSize: 14))),
+                            Icon(Icons.add_rounded, size: 20, color: _C.muted),
+                          ]),
                         ),
                       ),
                     if (_error != null) ...[
                       const SizedBox(height: 6),
                       Text(_error!, style: const TextStyle(color: _C.red, fontSize: 13, fontWeight: FontWeight.w600)),
+                    ],
+                    if (_kids.isNotEmpty && _choice != null) ...[
+                      const SizedBox(height: 14),
+                      Text(
+                        '${_names(_kids)}  ·  ${_day == 'today' ? 'Today' : _day == 'tomorrow' ? 'Tomorrow' : _dayLabel(_ymd(_from)) + (_ymd(_from) == _ymd(_to) ? '' : ' to ${_dayLabel(_ymd(_to))}')}  ·  ${_choice!.title}${_choice!.key == 'absent' && _reason != null ? ' ($_reason)' : ''}',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontSize: 13, color: _C.ink, fontWeight: FontWeight.w600),
+                      ),
                     ],
                     const SizedBox(height: 12),
                     SizedBox(
@@ -298,7 +366,11 @@ class _ApplyLeaveScreenState extends State<ApplyLeaveScreen> {
                         ),
                         child: _sending
                             ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                            : const Text('Apply leave', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15.5)),
+                            : Text(
+                                widget.students.length > 1 && _kids.isNotEmpty ? 'Apply leave for ${_names(_kids)}' : 'Apply leave',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15.5)),
                       ),
                     ),
                     const SizedBox(height: 26),
@@ -335,16 +407,61 @@ class _ApplyLeaveScreenState extends State<ApplyLeaveScreen> {
         ),
       );
 
-  Widget _childPicker() => Wrap(spacing: 8, runSpacing: 8, children: [
-        for (final s in widget.students)
-          _chip('${s['name'] ?? 'Child'}', _kids.contains(int.tryParse('${s['id']}')), () {
+  /// Several children: each one a clear tick card, plus "All children", so a parent cannot apply
+  /// for one child and forget the other without noticing.
+  Widget _childPicker() {
+    final ids = [for (final s in widget.students) int.tryParse('${s['id']}') ?? 0];
+    final all = ids.every(_kids.contains);
+    Widget card(String name, bool on, VoidCallback onTap, {bool isAll = false}) => InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(14),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 150),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+            decoration: BoxDecoration(
+              color: on ? const Color(0xFFE8EEFB) : Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: on ? _C.navy : _C.line, width: on ? 1.6 : 1),
+            ),
+            child: Row(children: [
+              Icon(on ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded,
+                  color: on ? _C.navy : _C.muted, size: 22),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 14.5, fontWeight: on || isAll ? FontWeight.w700 : FontWeight.w500, color: on ? _C.navy : _C.ink)),
+              ),
+            ]),
+          ),
+        );
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Row(children: [
+        const Expanded(
+          child: Text('Who is on leave?', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: _C.ink)),
+        ),
+        Text(_kids.isEmpty ? 'Choose' : '${_kids.length} of ${ids.length} chosen',
+            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: _kids.isEmpty ? _C.red : _C.navy)),
+      ]),
+      const SizedBox(height: 10),
+      for (final s in widget.students)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: card('${s['name'] ?? 'Child'}', _kids.contains(int.tryParse('${s['id']}')), () {
             final id = int.tryParse('${s['id']}') ?? 0;
             setState(() {
               _kids.contains(id) ? _kids.remove(id) : _kids.add(id);
               _error = null;
             });
-          }, icon: Icons.person_rounded),
-      ]);
+          }),
+        ),
+      card('All children', all, () => setState(() {
+            all ? _kids.clear() : _kids.addAll(ids);
+            _error = null;
+          }), isAll: true),
+    ]);
+  }
 
   Widget _dayPicker() {
     final now = DateTime.now();
@@ -352,10 +469,21 @@ class _ApplyLeaveScreenState extends State<ApplyLeaveScreen> {
         ? (_from == _to ? DateFormat('EEE d MMM').format(_from) : '${DateFormat('d MMM').format(_from)} – ${DateFormat('d MMM').format(_to)}')
         : 'Dates';
     return Wrap(spacing: 8, runSpacing: 8, children: [
-      _chip('Today', _day == 'today', () => setState(() {
+      Opacity(
+        opacity: _todayState == 'closed' ? 0.45 : 1,
+        child: _chip('Today', _day == 'today', () {
+          if (_todayState == 'closed') {
+            setState(() => _error = _todayMsg);
+            return;
+          }
+          setState(() {
             _day = 'today';
             _from = _to = now;
-          })),
+            _error = null;
+            if (!_choiceAllowed(_choice)) _choice = null;
+          });
+        }),
+      ),
       _chip('Tomorrow', _day == 'tomorrow', () => setState(() {
             _day = 'tomorrow';
             _from = _to = now.add(const Duration(days: 1));
@@ -371,8 +499,14 @@ class _ApplyLeaveScreenState extends State<ApplyLeaveScreen> {
           for (final c in _choices)
             SizedBox(
               width: w,
-              child: InkWell(
+              child: Opacity(
+                opacity: _choiceAllowed(c) ? 1 : 0.4,
+                child: InkWell(
                 onTap: () => setState(() {
+                  if (!_choiceAllowed(c)) {
+                    _error = _todayMsg;
+                    return;
+                  }
                   _choice = c;
                   _error = null;
                   if (c.key != 'absent') _reason = null;
@@ -394,9 +528,11 @@ class _ApplyLeaveScreenState extends State<ApplyLeaveScreen> {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: _choice == c ? c.color : _C.ink)),
                     const SizedBox(height: 2),
-                    Text(c.sub, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, color: _C.muted)),
+                    Text(_choiceAllowed(c) ? c.sub : 'Too late for today',
+                        maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, color: _C.muted)),
                   ]),
                 ),
+              ),
               ),
             ),
         ]);

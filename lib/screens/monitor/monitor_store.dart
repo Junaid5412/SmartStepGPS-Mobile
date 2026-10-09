@@ -266,8 +266,22 @@ class MonitorStore extends ChangeNotifier {
     return n is Map ? Map<String, dynamic>.from(n) : null;
   }
 
-  /// Children with a notice today (either trip), in roster order.
-  List<dynamic> get noticedStudents => students.where((s) => s['notice'] is Map).toList();
+  /// Children whose leave TODAY still matters: a trip it covers whose shift has not closed yet and
+  /// that the monitor has not marked. Once the evening shift is over (or every such child has been
+  /// confirmed) today's leave drops off the Home line and the list instead of lingering all night.
+  List<dynamic> get noticedStudents => students.where(_leavePending).toList();
+
+  bool _leavePending(dynamic s) {
+    if (s['notice'] is! Map) return false;
+    for (final shift in const ['morning', 'afternoon']) {
+      if (noticeFor(s, shift) == null) continue;
+      final w = window(shift);
+      if (w != null && w.state == 'closed') continue;
+      if (stageOf(s, shift) != Stage.waiting) continue;
+      return true;
+    }
+    return false;
+  }
 
   ShiftCounts counts(String shift) {
     final c = ShiftCounts();
