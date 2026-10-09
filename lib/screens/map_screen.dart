@@ -55,6 +55,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   int? _ageSec;       // how old the bus position was when fetched (server clock), null if unknown
   DateTime? _ageAt;   // when that was
   bool _full = false; // full-screen map
+  String? _moduleOff; // the school switched Bus Tracking off: its message
   bool? _cardOpenChoice; // trip card details: the parent's choice; until then open on taller screens
   bool get _cardOpen => _cardOpenChoice ?? false; // small by default; a tap opens the details above
   String? _pickedAt, _droppedAt, _otherEvent; // this trip's times (HH:mm) and absent / leave / by_parent
@@ -334,7 +335,16 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           _fitAllMarkers();
         }
       } else {
-        if (mounted) setState(() => _isLoading = false);
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+            // Switched off on the portal while this map was open: say so, and stop asking.
+            if (res['module_off'] == true) {
+              _moduleOff = '${res['error'] ?? 'Bus tracking is not available.'}';
+              _timer?.cancel();
+            }
+          });
+        }
       }
     } catch (e) {
       debugPrint('Error fetching bus location: $e');
@@ -673,7 +683,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         backgroundColor: const Color(0xFF1E3C72),
         elevation: 0,
       ),
-      body: _isLoading
+      body: _moduleOff != null
+          ? _buildModuleOff()
+          : _isLoading
           ? const CustomLoading(message: 'Connecting to live bus GPS...')
           : (!_isActiveWindow)
               ? _buildOutOfShiftScreen()
@@ -878,6 +890,31 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       ),
     );
   }
+
+  Widget _buildModuleOff() => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(28),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              width: 72,
+              height: 72,
+              decoration: const BoxDecoration(color: Color(0xFFF1F5F9), shape: BoxShape.circle),
+              child: const Icon(Icons.location_off_rounded, size: 34, color: _muted),
+            ),
+            const SizedBox(height: 16),
+            Text(_moduleOff!, textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Color(0xFF0F172A))),
+            const SizedBox(height: 6),
+            const Text('Please contact the school for details.', textAlign: TextAlign.center, style: TextStyle(fontSize: 13, color: _muted)),
+            const SizedBox(height: 20),
+            FilledButton(
+              onPressed: () => Navigator.of(context).maybePop(),
+              style: FilledButton.styleFrom(backgroundColor: _navy),
+              child: const Text('Back to home'),
+            ),
+          ]),
+        ),
+      );
 
   /// Full screen hides the header, so the status bar sits on the light map: dark icons there.
   void _setFull(bool on) {

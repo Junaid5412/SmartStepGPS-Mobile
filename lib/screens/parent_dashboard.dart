@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'package:flutter/foundation.dart' show mapEquals;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
@@ -33,6 +35,7 @@ class _ParentDashboardState extends State<ParentDashboard> with WidgetsBindingOb
   late PageController _pageController;
   int _currentBannerPage = 0;
   Timer? _bannerTimer;
+  Timer? _settingsTimer; // App Module Settings, re-checked every 10 s while the dashboard is open
 
   @override
   void initState() {
@@ -40,6 +43,7 @@ class _ParentDashboardState extends State<ParentDashboard> with WidgetsBindingOb
     WidgetsBinding.instance.addObserver(this);
     _pageController = PageController(viewportFraction: 0.93);
     _startBannerTimer();
+    _settingsTimer = Timer.periodic(const Duration(seconds: 10), (_) => _loadSettings());
     _loadProfile();
     _loadSettings();
     _fetchStudents();
@@ -49,6 +53,7 @@ class _ParentDashboardState extends State<ParentDashboard> with WidgetsBindingOb
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _bannerTimer?.cancel();
+    _settingsTimer?.cancel();
     _pageController.dispose();
     super.dispose();
   }
@@ -131,26 +136,35 @@ class _ParentDashboardState extends State<ParentDashboard> with WidgetsBindingOb
   Future<void> _loadSettings() async {
     try {
       final res = await ApiService.getSettings();
-      if (res['success'] == true && mounted) {
-        setState(() {
-          _companyName = res['company_name'] ?? res['app_name'] ?? _companyName;
-          _companyTagline = res['company_tagline'] ?? _companyTagline;
-          _logoUrl = res['logo'] ?? _logoUrl;
-          if (res['banners'] != null && (res['banners'] as List).isNotEmpty) {
-            _banners = res['banners'];
-          }
-          if (res['modules'] != null) {
-            _modules = {
-              'attendance': res['modules']['attendance'] ?? true,
-              'bus_tracking': res['modules']['bus_tracking'] ?? true,
-              'announcements': res['modules']['announcements'] ?? true,
-              'leave': res['modules']['leave'] ?? true,
-            };
-          }
-        });
-      }
+      if (res['success'] != true || !mounted) return;
+      final m = res['modules'];
+      final modules = m is Map
+          ? {
+              'attendance': m['attendance'] != false,
+              'bus_tracking': m['bus_tracking'] != false,
+              'announcements': m['announcements'] != false,
+              'leave': m['leave'] != false,
+            }
+          : _modules;
+      final company = res['company_name'] ?? res['app_name'] ?? _companyName;
+      final tagline = res['company_tagline'] ?? _companyTagline;
+      final logo = res['logo'] ?? _logoUrl;
+      final banners = (res['banners'] is List && (res['banners'] as List).isNotEmpty) ? res['banners'] as List : _banners;
+      // Polled every 10 s: redraw only when something really changed (a module switched on or off
+      // on the portal), so the banner slideshow is not reset each time.
+      final same = mapEquals(modules, _modules) && company == _companyName && tagline == _companyTagline && logo == _logoUrl &&
+          jsonEncode(banners) == jsonEncode(_banners);
+      if (same) return;
+      setState(() {
+        _companyName = company;
+        _companyTagline = tagline;
+        _logoUrl = logo;
+        _banners = banners;
+        _modules = modules;
+      });
     } catch (e) { debugPrint('Parent dashboard: settings load failed: $e'); }
   }
+
 
   Future<void> _fetchStudents() async {
     try {
