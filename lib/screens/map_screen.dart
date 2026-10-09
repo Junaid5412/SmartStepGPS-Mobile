@@ -66,13 +66,15 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   LatLng? _parentLocation;
 
   // Road Routing
-  List<LatLng> _routeStops = [];
   List<LatLng> _roadPolyline = [];
   double _roadDistanceKm = 0.0;
   int _etaMinutes = 0;
   bool _initialFitted = false;
   DateTime? _lastRouteFetchTime;
   LatLng? _lastRoutedBusPosition;
+  String _childStage = 'waiting'; // this child on this trip: waiting | on_bus | done
+  String _routedSig = '';         // which trip the line was drawn for
+  String _targetLabel = 'to your stop';
 
   @override
   void initState() {
@@ -235,19 +237,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           }
         }
 
-        // Other route stops (not shown to parent as markers, but used for road routing)
-        List<LatLng> stops = [];
-        if (res['route_stops'] is List) {
-          for (var stop in res['route_stops']) {
-            if (stop['lat'] != null && stop['lng'] != null) {
-              final lat = double.tryParse(stop['lat'].toString());
-              final lng = double.tryParse(stop['lng'].toString());
-              if (lat != null && lng != null) {
-                stops.add(LatLng(lat, lng));
-              }
-            }
-          }
-        }
+        final stage = '${res['child_stage'] ?? 'waiting'}';
+        _childStage = (stage == 'on_bus' || stage == 'done') ? stage : 'waiting';
 
         // Bus location (use active location, or last_known_location if outside active window)
         final locData = active ? res['location'] : (res['last_known_location'] ?? res['location']);
@@ -272,7 +263,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           _schoolLocation = schoolPos;
           _homeLocation = homePos;
           _homeAddress = homeAddr;
-          _routeStops = stops;
           _speed = spd;
           _lastUpdated = upd;
           _isLoading = false;
@@ -283,11 +273,13 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           _animateBusTo(busPos);
         }
 
-        // Fetch road routing polyline if bus & destination exist (throttled to avoid OSRM rate limits)
-        if (_busLocation != null && _homeLocation != null) {
+        // The road line: where the bus is going for this child, re-drawn when the trip changes
+        // (picked up, dropped) or every 15 s once the bus has moved ~45 m.
+        if (_busLocation != null) {
           final now = DateTime.now();
+          final sig = '$_currentShift|$_childStage';
           bool shouldFetchRoute = false;
-          if (_roadPolyline.isEmpty || _lastRouteFetchTime == null) {
+          if (sig != _routedSig || _lastRouteFetchTime == null) {
             shouldFetchRoute = true;
           } else if (now.difference(_lastRouteFetchTime!).inSeconds >= 15) {
             if (_lastRoutedBusPosition == null) {
@@ -304,7 +296,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           if (shouldFetchRoute) {
             _lastRouteFetchTime = now;
             _lastRoutedBusPosition = _busLocation;
-            _fetchRoadRoute(_busLocation!, _homeLocation!, _schoolLocation, _routeStops);
+            _routedSig = sig;
+            _fetchRoadRoute(_busLocation!);
           }
         }
 
@@ -322,33 +315,48 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     }
   }
 
-  /// Calculates real road-wise polyline via OSRM public routing API
-  /// Includes intermediate route stops along the path without displaying them as markers to parents
-  Future<void> _fetchRoadRoute(LatLng bus, LatLng home, LatLng? school, List<LatLng> stops) async {
+  /// Where the bus still has to go for this child, in order, and which of those points the
+  /// distance and arrival time are for.
+  ///   Morning: waiting -> their stop, then school (time to their stop); on the bus -> school.
+  ///   Evening: not boarded yet -> school, then home (time to home); on the bus -> home.
+  ///   Done (at school / home / absent): nothing to draw.
+  (List<LatLng>, int, String) _trip() {
+    final home = _homeLocation, school = _schoolLocation;
+    final morning = _currentShift == 'morning';
+    if (_childStage == 'done') return (const [], -1, '');
+    if (morning) {
+      if (_childStage == 'on_bus') {
+        return school == null ? (const [], -1, '') : ([school], 0, 'to school');
+      }
+      if (home == null) return school == null ? (const [], -1, '') : ([school], 0, 'to school');
+      return ([home, if (school != null) school], 0, 'to your stop');
+    }
+    if (home == null) return (const [], -1, '');
+    if (_childStage == 'on_bus' || school == null) return ([home], 0, 'to your stop');
+    return ([school, home], 1, 'to your stop');
+  }
+
+  /// The road line from the bus along that trip (public OSRM), with the distance and time to the
+  /// point that matters to this parent.
+  Future<void> _fetchRoadRoute(LatLng bus) async {
+    final (dest, target, label) = _trip();
+    if (dest.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _roadPolyline = [];
+          _roadDistanceKm = 0;
+          _etaMinutes = 0;
+          _targetLabel = _currentShift == 'morning' ? 'at school' : 'trip complete';
+        });
+      }
+      return;
+    }
     try {
-      List<LatLng> waypoints = [bus];
-
-      // Add intermediate stops (limit to 5 closest to keep URL fast and within limits)
-      for (final s in stops.take(5)) {
-        // Avoid duplicate coordinates
-        if ((s.latitude - bus.latitude).abs() > 0.0002 || (s.longitude - bus.longitude).abs() > 0.0002) {
-          waypoints.add(s);
-        }
-      }
-
-      // Add Home Stop
-      waypoints.add(home);
-
-      // In morning shift, add School Campus as end terminus
-      if (school != null && _currentShift == 'morning') {
-        waypoints.add(school);
-      }
-
-      // OSRM format: lng,lat;lng,lat...
+      final waypoints = [bus, ...dest];
       final coordsParam = waypoints.map((p) => '${p.longitude},${p.latitude}').join(';');
       final url = Uri.parse('https://router.project-osrm.org/route/v1/driving/$coordsParam?overview=full&geometries=geojson');
 
-      final response = await http.get(url).timeout(const Duration(seconds: 5));
+      final response = await http.get(url, headers: {'User-Agent': 'SmartStepGPS/1.0'}).timeout(const Duration(seconds: 6));
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         if (data['routes'] != null && (data['routes'] as List).isNotEmpty) {
@@ -356,14 +364,24 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           final coords = route['geometry']['coordinates'] as List<dynamic>;
           final points = coords.map<LatLng>((c) => LatLng((c[1] as num).toDouble(), (c[0] as num).toDouble())).toList();
 
-          final double distMeters = (route['distance'] as num?)?.toDouble() ?? 0;
-          final double durSeconds = (route['duration'] as num?)?.toDouble() ?? 0;
+          // Distance and time up to the target point only (the legs before it, plus its own).
+          double distMeters = 0, durSeconds = 0;
+          final legs = (route['legs'] as List?) ?? const [];
+          for (var i = 0; i <= target && i < legs.length; i++) {
+            distMeters += (legs[i]['distance'] as num?)?.toDouble() ?? 0;
+            durSeconds += (legs[i]['duration'] as num?)?.toDouble() ?? 0;
+          }
+          if (legs.isEmpty) {
+            distMeters = (route['distance'] as num?)?.toDouble() ?? 0;
+            durSeconds = (route['duration'] as num?)?.toDouble() ?? 0;
+          }
 
           if (mounted) {
             setState(() {
               _roadPolyline = points;
               _roadDistanceKm = distMeters / 1000.0;
               _etaMinutes = (durSeconds / 60.0).round();
+              _targetLabel = label;
             });
           }
           return;
@@ -373,17 +391,20 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       debugPrint('OSRM road routing error: $e');
     }
 
-    // Fallback: Haversine distance if OSRM is unreachable
-    if (mounted && _roadDistanceKm == 0.0) {
+    // Routing service unreachable: straight lines along the same trip, distance as the crow flies.
+    if (mounted) {
       const dist = Distance();
-      final km = dist.as(LengthUnit.Kilometer, bus, home);
+      var km = 0.0;
+      var prev = bus;
+      for (var i = 0; i <= target && i < dest.length; i++) {
+        km += dist.as(LengthUnit.Meter, prev, dest[i]) / 1000.0;
+        prev = dest[i];
+      }
       setState(() {
-        _roadDistanceKm = km;
-        _etaMinutes = (km / 30.0 * 60).round().clamp(1, 120);
-        if (_roadPolyline.isEmpty) {
-          _roadPolyline = [bus, home];
-          if (school != null) _roadPolyline.add(school);
-        }
+        _roadDistanceKm = km * 1.3;
+        _etaMinutes = (km * 1.3 / 30.0 * 60).round().clamp(1, 120);
+        _targetLabel = label;
+        _roadPolyline = [bus, ...dest];
       });
     }
   }
@@ -499,6 +520,12 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   }
 
   void _fitAllMarkers() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _fitNow();
+    });
+  }
+
+  void _fitNow() {
     final points = <LatLng>[];
     if (_busLocation != null) points.add(_busLocation!);
     if (_homeLocation != null) points.add(_homeLocation!);
@@ -508,7 +535,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     if (points.isEmpty) return;
 
     if (points.length == 1) {
-      _mapController.move(points.first, 15.0);
+      try { _mapController.move(points.first, 15.0); } catch (_) {}
     } else {
       try {
         final bounds = LatLngBounds.fromPoints(points);
@@ -516,10 +543,11 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           CameraFit.bounds(
             bounds: bounds,
             padding: const EdgeInsets.only(top: 100, bottom: 180, left: 50, right: 50),
+            maxZoom: 17,
           ),
         );
       } catch (_) {
-        _mapController.move(points.first, 15.0);
+        try { _mapController.move(points.first, 15.0); } catch (_) {}
       }
     }
   }
@@ -1015,7 +1043,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                 iconColor: const Color(0xFF1E3C72),
                 title: 'Road Distance',
                 value: _roadDistanceKm > 0 ? '${_roadDistanceKm.toStringAsFixed(1)} km' : '--',
-                subtitle: 'to destination',
+                subtitle: _targetLabel,
               ),
               Container(width: 1, height: 38, color: Colors.grey.shade300),
               _buildMetricColumn(
