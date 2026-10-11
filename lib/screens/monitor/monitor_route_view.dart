@@ -98,6 +98,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
   bool? _headFromTracker;
   final ValueNotifier<_Fix?> _shown = ValueNotifier(null); // the gliding bus arrow
   final ValueNotifier<LatLng?> _phoneDot = ValueNotifier(null);
+  final ValueNotifier<double> _rotation = ValueNotifier(0); // the map's turn in degrees (0 = north up)
   late final AnimationController _glide;
   LatLng? _glideFrom, _glideTo;
   double _headFrom = 0, _headTo = 0;
@@ -155,6 +156,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     _glide.dispose();
     _shown.dispose();
     _phoneDot.dispose();
+    _rotation.dispose();
     _bannerTimer?.cancel();
     super.dispose();
   }
@@ -672,10 +674,11 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
           // that it would go blank, and Qatar fits in zoom 8.
           minZoom: 8,
           maxZoom: 18,
-          // North always up: no two-finger rotating, which left the map turned with no way back.
-          interactionOptions: const InteractionOptions(flags: InteractiveFlag.all & ~InteractiveFlag.rotate),
+          // Two fingers turn the map a full 360 degrees; the compass button snaps it back to north.
+          interactionOptions: const InteractionOptions(flags: InteractiveFlag.all),
           onMapReady: () => setState(() => _mapReady = true),
           onPositionChanged: (camera, hasGesture) {
+            _rotation.value = camera.rotation;
             if (hasGesture && _follow) setState(() => _follow = false);
           },
         ),
@@ -772,6 +775,38 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
           _fab(Icons.format_list_numbered_rounded, 'All stops', () {
             setState(() => _cardOpen = true);
           }),
+          // Compass: appears once the map is turned; one tap brings north back up.
+          ValueListenableBuilder<double>(
+            valueListenable: _rotation,
+            builder: (context, rot, _) {
+              final turned = rot % 360;
+              if (!(turned > 1 && turned < 359)) return const SizedBox.shrink();
+              return Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Material(
+                  color: Colors.white,
+                  shape: const CircleBorder(),
+                  elevation: 4,
+                  shadowColor: Colors.black38,
+                  child: InkWell(
+                    customBorder: const CircleBorder(),
+                    onTap: () => _map.rotate(0),
+                    child: Tooltip(
+                      message: 'Point north up',
+                      child: Padding(
+                        padding: const EdgeInsets.all(10),
+                        // North on screen is the map's turn, clockwise; the needle follows it.
+                        child: Transform.rotate(
+                          angle: rot * math.pi / 180,
+                          child: const Icon(Icons.navigation_rounded, color: Color(0xFFDC2626), size: 22),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
         ]),
       ),
       if (_banner != null)

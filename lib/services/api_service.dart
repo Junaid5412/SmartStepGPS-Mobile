@@ -148,9 +148,11 @@ class ApiService {
     return _safeDecode(response.body);
   }
 
-  static Future<Map<String, dynamic>> getBusLocation(int deviceId, {int? studentId}) async {
+  /// [lite]: only the bus's position and state (a few hundred bytes) - for the quick polls between full refreshes.
+  static Future<Map<String, dynamic>> getBusLocation(int deviceId, {int? studentId, bool lite = false}) async {
     final token = await getToken();
     String url = '$baseUrl/bus_location.php?device_id=$deviceId';
+    if (lite) url += '&lite=1';
     if (studentId != null && studentId > 0) {
       url += '&student_id=$studentId';
     }

@@ -6,6 +6,7 @@ The app's map is drawn from two bundled files - nothing comes from a third-party
 |---|---|
 | `assets/map/qatar.pmtiles` | Vector tiles for Qatar, zoom 0–15, cut from the Protomaps daily OpenStreetMap build |
 | `assets/map/protomaps_light_en.json` | The official Protomaps "light" style, reduced to English labels |
+| `assets/map/protomaps_google_en.json` | The Google-style look the app actually uses: the light style above with recoloured land/water/parks/buildings, yellow highways, grey road casings, coloured POI labels from zoom 14. Only colours, widths and label settings differ, so the Flutter renderer handles it. |
 
 **Licence:** the map data is OpenStreetMap, under the ODbL. The map must show
 "© OpenStreetMap contributors" (the map screen does). The Protomaps style is CC0 and its

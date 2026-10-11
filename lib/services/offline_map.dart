@@ -26,7 +26,7 @@ class OfflineMap {
   static const String attribution = 'OpenStreetMap contributors';
 
   static const String _tilesAsset = 'assets/map/qatar.pmtiles';
-  static const String _styleAsset = 'assets/map/protomaps_light_en.json';
+  static const String _styleAsset = 'assets/map/protomaps_google_en.json';
   static const String _tilesVersion = '20261008';
 
   final Theme theme;

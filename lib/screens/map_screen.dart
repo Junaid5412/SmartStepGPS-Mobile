@@ -23,9 +23,16 @@ class MapScreen extends StatefulWidget {
   State<MapScreen> createState() => _MapScreenState();
 }
 
-class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
+class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, WidgetsBindingObserver {
   final MapController _mapController = MapController();
   Timer? _timer;
+  int _pollSec = 3;        // how soon to ask again - the server sets it: fast while moving, slow when parked
+  DateTime? _lastFull;     // the last full refresh (route, crew, trip events); the polls between are light
+  bool _fetching = false;  // one request at a time
+  bool _paused = false;    // app in the background: no polling
+  DateTime? _lastFixAt;    // when the previous NEW position arrived
+  double? _gapEmaMs;       // typical time between new positions (smoothed) - the glide lasts about that long
+  double? _course;         // the tracker's own heading, degrees
 
   /// The bundled English map of Qatar as a layer, built ONCE when the map has opened (null for the
   /// moment that takes on first use). Handing Flutter the same widget instance on every rebuild lets it
@@ -37,6 +44,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   /// frame and so rebuilt the whole screen - map included - sixty times a second. Now only the bus
   /// marker layer listens to this.
   final ValueNotifier<LatLng?> _busPos = ValueNotifier<LatLng?>(null);
+  final ValueNotifier<double> _rotation = ValueNotifier<double>(0); // the map's turn, in degrees (0 = north up)
 
   /// Short status line shown just under the header (e.g. "Locating live bus position...").
   String? _banner;
@@ -53,6 +61,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   LatLng? _previousBusLocation; // previous raw GPS position (for animation start)
   double _speed = 0.0;
   String _lastUpdated = '';
+  String _busState = ''; // from the server: moving | idle | parked | nosignal | offline ('' = old server)
   int? _ageSec;       // how old the bus position was when fetched (server clock), null if unknown
   DateTime? _ageAt;   // when that was
   bool _full = false; // full-screen map
@@ -110,17 +119,41 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     });
     _parseInitialStudentData();
     _fetchParentLocation();
-    _fetchLocation();
-    // Poll live location every 3 seconds
-    _timer = Timer.periodic(const Duration(seconds: 3), (_) => _fetchLocation());
+    WidgetsBinding.instance.addObserver(this);
+    _fetchLocation(full: true).whenComplete(_schedule);
+  }
+
+  /// Ask again after the interval the server asked for (3 s while the bus moves, longer when it is parked or
+  /// silent). One request at a time, and none while the app is in the background.
+  void _schedule() {
+    _timer?.cancel();
+    if (!mounted || _paused || _moduleOff != null) return;
+    _timer = Timer(Duration(seconds: _pollSec), () async {
+      await _fetchLocation();
+      _schedule();
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      if (!_paused) return;
+      _paused = false;
+      _fetchLocation(full: true).whenComplete(_schedule); // back on screen: catch up at once
+    } else if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
+      _paused = true;
+      _timer?.cancel();
+    }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _bannerTimer?.cancel();
     _markerAnimController?.dispose();
     _busPos.dispose();
+    _rotation.dispose();
     super.dispose();
   }
 
@@ -203,7 +236,10 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     }
   }
 
-  Future<void> _fetchLocation() async {
+  /// [full]: everything (route, crew, trip events). Otherwise - when a full answer is under 15 s old - only the
+  /// bus's position and state, which is all that changes from one poll to the next.
+  Future<void> _fetchLocation({bool full = false}) async {
+    if (_fetching) return;
     final deviceId = int.tryParse(widget.student['device_id']?.toString() ?? '0') ?? 0;
     final studentId = int.tryParse(widget.student['id']?.toString() ?? '0');
 
@@ -212,9 +248,18 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       return;
     }
 
+    _fetching = true;
     try {
-      final res = await ApiService.getBusLocation(deviceId, studentId: studentId);
+      final lite = !full && !_isLoading && _lastFull != null && DateTime.now().difference(_lastFull!).inSeconds < 15;
+      final res = await ApiService.getBusLocation(deviceId, studentId: studentId, lite: lite);
       if (res['success'] == true && mounted) {
+        if (res['lite'] == true) {
+          _applyLive(res);
+          return;
+        }
+        _lastFull = DateTime.now();
+        final pw = res['poll_sec'];
+        if (pw is num) _pollSec = pw.toInt().clamp(2, 90).toInt();
         final bool active = res['is_active_window'] ?? true;
         final shift = res['current_shift']?.toString() ?? 'morning';
         final timings = (res['timings'] is Map) ? Map<String, dynamic>.from(res['timings']) : <String, dynamic>{};
@@ -265,6 +310,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         // Bus location (use active location, or last_known_location if outside active window)
         final locData = active ? res['location'] : (res['last_known_location'] ?? res['location']);
         if (locData is Map) _locSource = '${locData['source'] ?? ''}';
+        final bs = res['bus_status'];
+        _busState = bs is Map ? '${bs['state'] ?? ''}' : '';
         LatLng? busPos;
         double spd = 0.0;
         String upd = '';
@@ -275,6 +322,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             busPos = LatLng(lat, lng);
           }
           spd = double.tryParse(locData['speed']?.toString() ?? '0') ?? 0.0;
+          _course = double.tryParse('${locData['course'] ?? ''}');
           upd = locData['updated_at']?.toString() ?? '';
           final a = locData['age_sec'];
           _ageSec = a is num ? a.toInt() : int.tryParse('${a ?? ''}');
@@ -297,6 +345,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         // Smooth animate bus marker to new position (Uber-style glide)
         if (busPos != null) {
           _animateBusTo(_onRoad(busPos));
+          if (_course != null && spd > 3) _busBearing = _course!;
         }
 
         // The school shows parents the bus's full route (App Module Settings -> Parent map): the
@@ -375,6 +424,40 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     } catch (e) {
       debugPrint('Error fetching bus location: $e');
       if (mounted) setState(() => _isLoading = false);
+    } finally {
+      _fetching = false;
+    }
+  }
+
+  /// The light answer: where the bus is and what it is doing. Applied without touching anything else on the
+  /// screen. If something bigger changed (shift, trip window, position source) the next poll is a full one.
+  void _applyLive(Map<String, dynamic> res) {
+    final active = res['is_active_window'] ?? true;
+    final shift = res['current_shift']?.toString() ?? _currentShift;
+    final pw = res['poll_sec'];
+    if (pw is num) _pollSec = pw.toInt().clamp(2, 90).toInt();
+    final bs = res['bus_status'];
+    _busState = bs is Map ? '${bs['state'] ?? ''}' : '';
+    final locData = res['location'];
+    if (locData is! Map) return;
+    final src = '${locData['source'] ?? ''}';
+    if (active != _isActiveWindow || shift != _currentShift || src != _locSource) _lastFull = null;
+    if (!active) return;
+    final lat = double.tryParse('${locData['lat']}');
+    final lng = double.tryParse('${locData['lng']}');
+    final spd = double.tryParse('${locData['speed'] ?? 0}') ?? 0.0;
+    _course = double.tryParse('${locData['course'] ?? ''}');
+    final a = locData['age_sec'];
+    _ageSec = a is num ? a.toInt() : int.tryParse('${a ?? ''}');
+    _ageAt = DateTime.now();
+    _locSource = src;
+    setState(() {
+      _speed = spd;
+      _lastUpdated = locData['updated_at']?.toString() ?? '';
+    });
+    if (lat != null && lng != null) {
+      _animateBusTo(_onRoad(LatLng(lat, lng)));
+      if (_course != null && spd > 3) _busBearing = _course!;
     }
   }
 
@@ -521,10 +604,23 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   /// How old the bus position is now, in seconds, or null when unknown.
   int? get _ageNow => _ageSec == null || _ageAt == null ? null : _ageSec! + DateTime.now().difference(_ageAt!).inSeconds;
 
+  /// The bus is standing still with its engine off - a parked tracker only reports every few minutes, so
+  /// a quiet bus is not a lost one.
+  bool get _busParked => _busState == 'parked';
+
+  /// The bus has really stopped reporting (tracker off / no data). Trusts the server's verdict; only an
+  /// older server that does not send one falls back to the age of the last position.
+  bool get _busSilent {
+    if (_busState.isNotEmpty) return _busState == 'offline' || _busState == 'nosignal';
+    final a = _ageNow;
+    return a != null && a > 180;
+  }
+
   bool get _positionLive => (_ageNow ?? 0) <= 60;
 
   /// Under the speed: "Live", or how long ago the bus last reported - never a bare clock time.
   String get _freshLabel {
+    if (_busParked) return 'Parked';
     final a = _ageNow;
     if (a == null) return _lastUpdated.isEmpty ? '' : 'Live';
     if (a <= 30) return 'Live';
@@ -572,6 +668,17 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       _bearingAnchor = target;
     }
 
+    // The glide lasts about as long as the TYPICAL gap between new positions (smoothed, not just the last one),
+    // a touch longer, so the next position normally arrives before the bus has finished the last stretch: it
+    // keeps rolling at a steady pace instead of running to the point and waiting there. When the next one does
+    // arrive the bus carries on from where it is now, so there is no jump.
+    final nowT = DateTime.now();
+    if (_lastFixAt != null) {
+      final g = nowT.difference(_lastFixAt!).inMilliseconds.toDouble();
+      if (g <= 20000) _gapEmaMs = _gapEmaMs == null ? g : _gapEmaMs! * 0.6 + g * 0.4;
+    }
+    _lastFixAt = nowT;
+    final glideMs = ((_gapEmaMs ?? 3000.0) * 1.1).clamp(1500.0, 15000.0).toInt();
     // Save previous → new positions
     _previousBusLocation = from;
     _busLocation = target;
@@ -580,16 +687,15 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     _markerAnimController?.stop();
     _markerAnimController?.dispose();
 
-    // Create new animation: 2.5s ease-out glide (matches poll interval)
     _markerAnimController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 2500),
+      duration: Duration(milliseconds: glideMs),
     );
 
-    // Curved animation for natural deceleration (like Uber)
+    // Constant speed along the glide, like a delivery-app courier (an ease-out made it surge and pause).
     final curved = CurvedAnimation(
       parent: _markerAnimController!,
-      curve: Curves.easeOutCubic,
+      curve: Curves.linear,
     );
 
     // On each frame: interpolate position and optionally pan camera
@@ -602,7 +708,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       _busPos.value = interpolated; // repaints only the bus marker layer
 
       // Smooth camera follow (only while bus is moving at >3 km/h)
-      if (_cameraFollowBus && _speed > 3 && t < 0.95) {
+      if (_cameraFollowBus && _speed > 3) {
         // Don't fight user's manual pan — only follow during active movement
         try {
           _mapController.move(interpolated, _mapController.camera.zoom);
@@ -757,12 +863,13 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                     // the map would go blank.
                     minZoom: 8,
                     maxZoom: 18,
-                    // North always up: no two-finger rotating, which left the map turned.
-                    interactionOptions: const InteractionOptions(flags: InteractiveFlag.all & ~InteractiveFlag.rotate),
+                    // Two fingers turn the map a full 360 degrees; the compass button (top right) snaps it back to north.
+                    interactionOptions: const InteractionOptions(flags: InteractiveFlag.all),
                     // The map has its size now: make sure the offline tiles cover the whole screen.
                     onMapReady: _kickMap,
                     // Disable follow mode when user manually pans the map (like Uber)
                     onPositionChanged: (pos, hasGesture) {
+                      _rotation.value = pos.rotation;
                       if (hasGesture && _cameraFollowBus) {
                         setState(() => _cameraFollowBus = false);
                       }
@@ -791,8 +898,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                         ],
                       ),
 
-                    // 4 Distinct Markers: School, Home, Bus, Parent
+                    // 4 Distinct Markers: School, Home, Bus, Parent. They stay upright and readable however the map is turned.
                     MarkerLayer(
+                      rotate: true,
                       markers: [
                         // 1. School Marker
                         if (_schoolLocation != null)
@@ -845,7 +953,12 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                       builder: (context, pos, _) => pos == null
                           ? const SizedBox.shrink()
                           : MarkerLayer(markers: [
-                              Marker(point: pos, width: 75, height: 75, child: _buildBusMarker()),
+                              // The bus itself. Moving: an arrow that turns with the map, so it always points the way the
+                              // bus drives. Stopped: the bus icon, kept upright.
+                              Marker(point: pos, width: 56, height: 56, rotate: _speed <= 3, child: _buildBusIcon()),
+                              // Its speed label: always upright, above the bus.
+                              Marker(point: pos, width: 110, height: 104, rotate: true,
+                                  child: Align(alignment: Alignment.topCenter, child: _buildBusPill())),
                             ]),
                     ),
 
@@ -889,6 +1002,44 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                         icon: _full ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded,
                         tooltip: _full ? 'Exit full screen' : 'Full screen',
                         onTap: () => _setFull(!_full),
+                      ),
+                      // Compass: appears once the map is turned; one tap brings north back up.
+                      ValueListenableBuilder<double>(
+                        valueListenable: _rotation,
+                        builder: (context, rot, _) {
+                          final turned = rot % 360;
+                          final off = turned > 1 && turned < 359;
+                          return AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 180),
+                            child: !off
+                                ? const SizedBox(key: ValueKey('nocompass'), height: 0)
+                                : Padding(
+                                    key: const ValueKey('compass'),
+                                    padding: const EdgeInsets.only(top: 10),
+                                    child: Material(
+                                      color: Colors.white,
+                                      shape: const CircleBorder(),
+                                      elevation: 4,
+                                      shadowColor: Colors.black38,
+                                      child: InkWell(
+                                        customBorder: const CircleBorder(),
+                                        onTap: () => _mapController.rotate(0),
+                                        child: Tooltip(
+                                          message: 'Point north up',
+                                          child: Padding(
+                                            padding: const EdgeInsets.all(10),
+                                            // North on screen is the map's turn, clockwise; the needle follows it.
+                                            child: Transform.rotate(
+                                              angle: rot * math.pi / 180,
+                                              child: const Icon(Icons.navigation_rounded, color: Color(0xFFDC2626), size: 22),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                          );
+                        },
                       ),
                     ],
                   ),
@@ -1042,16 +1193,10 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     );
   }
 
-  /// Bus Marker with Speed pill, heading rotation & pulsating styling
-  Widget _buildBusMarker() {
-    // Only rotate when actually moving (speed > 3 km/h)
+  /// The speed / status label above the bus (kept upright on screen however the map is turned).
+  Widget _buildBusPill() {
     final bool isMoving = _speed > 3;
-
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // Speed pill (always upright, never rotated)
-        Container(
+    return Container(
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
           decoration: BoxDecoration(
             color: _isActiveWindow ? const Color(0xFF1E3C72) : Colors.grey.shade700,
@@ -1083,10 +1228,14 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                 ),
             ],
           ),
-        ),
-        const SizedBox(height: 2),
-        // Bus icon circle — rotates to face direction of travel
-        Transform.rotate(
+        );
+  }
+
+  /// The bus: an arrow facing the direction of travel while moving, the bus icon when stopped.
+  Widget _buildBusIcon() {
+    final bool isMoving = _speed > 3;
+    return Center(
+        child: Transform.rotate(
           angle: isMoving ? _busBearing * math.pi / 180 : 0,
           child: Container(
             padding: const EdgeInsets.all(7),
@@ -1105,7 +1254,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             ),
           ),
         ),
-      ],
     );
   }
 
@@ -1247,8 +1395,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       };
     }
     // The bus has stopped reporting: say so, rather than describe a position that is out of date.
-    final age = _ageNow;
-    final silent = age != null && age > 180;
+    final silent = _busSilent;
     // Close and about to get there: within about two minutes and a short distance.
     final near = !silent && _etaMinutes > 0 && _etaMinutes <= 2 && _roadDistanceKm > 0 && _roadDistanceKm < 1.2;
     const amber = Color(0xFFD97706);
@@ -1261,6 +1408,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           return ('Reached school${_droppedAt != null ? ' at ${_t12(_droppedAt)}' : ''}', _green, Icons.school_rounded);
         default:
           if (silent) return ('Waiting for the bus signal', _muted, Icons.wifi_off_rounded);
+          if (_busParked) return ('Bus has not started yet', _muted, Icons.local_parking_rounded);
           if (near) return ('Bus is arriving at your stop', amber, Icons.notifications_active_rounded);
           return (_etaMinutes > 0 ? 'Bus is on the way to your home' : 'Waiting for the bus', _blue, Icons.near_me_rounded);
       }
@@ -1318,7 +1466,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   }
   void _locateBus() {
     _showBanner('Locating live bus position...');
-    _fetchLocation();
+    _fetchLocation(full: true);
     setState(() => _cameraFollowBus = true);
     final p = _displayBusLocation ?? _busLocation ?? _homeLocation;
     if (p != null) {
