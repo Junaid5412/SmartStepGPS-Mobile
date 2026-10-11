@@ -11,6 +11,11 @@
         android:fullBackupContent="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:usesCleartextTraffic="false">
+        <!-- Google Maps API key for the official Google map. Filled at build time from GOOGLE_MAPS_API_KEY
+             (GitHub Actions secret) or MAPS_API_KEY in android/local.properties; empty = no official map. -->
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="${MAPS_API_KEY}" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

@@ -47,8 +47,23 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
-      - name: Analyze (errors fail the build, warnings do not)
-        # NO "|| true". Swallowing the exit code cost a two-minute build and a badly misleading
+      # Google Maps API key for the official Google map, from the GOOGLE_MAPS_API_KEY secret: written into
+      # Info.plist (AppDelegate hands it to Google Maps) and announced to the Dart code with --dart-define.
+      - name: Google Maps API key
+        id: gmaps
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+        run: |
+          if [ -n "$GOOGLE_MAPS_API_KEY" ]; then
+            /usr/libexec/PlistBuddy -c "Set :GMSApiKey $GOOGLE_MAPS_API_KEY" ios/Runner/Info.plist
+            echo "define=--dart-define=GMAPS_KEY_PRESENT=true" >> "$GITHUB_OUTPUT"
+            echo "Google Maps key: present"
+          else
+            echo "define=" >> "$GITHUB_OUTPUT"
+            echo "Google Maps key: not set"
+          fi
+
+      - name: Analyze (errors fail the build, warnings do not)        # NO "|| true". Swallowing the exit code cost a two-minute build and a badly misleading
         # error: four Dart errors (an undefined field and an undefined variable) let this step pass,
         # the Xcode build then failed, and Flutter's diagnostic guessed at the cause and printed
         # "requires a selected Development Team" - sending us after a signing problem that did not
@@ -142,7 +157,7 @@ jobs:
           </plist>
           PLIST
 
-          flutter build ipa --release --export-options-plist=ios/ExportOptions.plist
+          flutter build ipa --release --export-options-plist=ios/ExportOptions.plist ${{ steps.gmaps.outputs.define }}
 
       - name: Confirm the IPA is actually signed
         if: steps.signing.outputs.available == 'true'
@@ -170,7 +185,7 @@ jobs:
       # ---- unsigned path ----------------------------------------------------------------------
       - name: Build unsigned app (compile check only)
         if: steps.signing.outputs.available != 'true'
-        run: flutter build ios --release --no-codesign
+        run: flutter build ios --release --no-codesign ${{ steps.gmaps.outputs.define }}
 
       - name: Package unsigned IPA
         if: steps.signing.outputs.available != 'true'

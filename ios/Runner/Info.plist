@@ -90,5 +90,7 @@
 	-->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>GMSApiKey</key>
+	<string></string>
 </dict>
 </plist>

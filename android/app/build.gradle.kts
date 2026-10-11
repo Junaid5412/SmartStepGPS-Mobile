@@ -13,6 +13,16 @@ if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
 
+// Google Maps API key (official Google map): the GOOGLE_MAPS_API_KEY environment variable - the GitHub Actions
+// secret - or MAPS_API_KEY in android/local.properties for a local build. Empty when neither is set.
+val localProperties = Properties()
+val localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localProperties.load(FileInputStream(localPropertiesFile))
+}
+val mapsApiKey: String = System.getenv("GOOGLE_MAPS_API_KEY")?.takeIf { it.isNotBlank() }
+    ?: (localProperties.getProperty("MAPS_API_KEY") ?: "")
+
 android {
     namespace = "com.smartstep.gps"
     compileSdk = 36
@@ -29,6 +39,7 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        manifestPlaceholders["MAPS_API_KEY"] = mapsApiKey
     }
 
     signingConfigs {

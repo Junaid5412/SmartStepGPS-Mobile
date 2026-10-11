@@ -8,9 +8,9 @@ import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
-import 'package:vector_map_tiles/vector_map_tiles.dart';
 import '../services/api_service.dart';
-import '../services/offline_map.dart';
+import '../services/map_config.dart';
+import '../widgets/google_bus_map.dart';
 import '../widgets/custom_loading.dart';
 import '../widgets/module_gate.dart';
 
@@ -34,11 +34,60 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
   double? _gapEmaMs;       // typical time between new positions (smoothed) - the glide lasts about that long
   double? _course;         // the tracker's own heading, degrees
 
-  /// The bundled English map of Qatar as a layer, built ONCE when the map has opened (null for the
-  /// moment that takes on first use). Handing Flutter the same widget instance on every rebuild lets it
-  /// skip the layer entirely; a freshly constructed VectorTileLayer each time made the map redo work
-  /// on every rebuild, which is what made panning and zooming stutter.
-  Widget? _tileLayer;
+  /// The base map. One const widget (it follows the portal's map choice by itself), so rebuilding the screen
+  /// never rebuilds the map tiles.
+  static const Widget _baseMap = BaseMapLayer();
+
+  /// The official Google map's camera, while that map is the one on screen (App Module Settings -> Map in the apps).
+  GoogleMapCam? _gcam;
+  bool get _googleOn => MapConfig.instance.value.isGoogleSdk;
+
+  // Camera moves, whichever map is on screen.
+  void _camMove(LatLng p, double zoom) {
+    try {
+      if (_googleOn) {
+        _gcam?.animateTo(p, zoom);
+      } else {
+        _mapController.move(p, zoom);
+      }
+    } catch (_) {}
+  }
+
+  void _camFollow(LatLng p) {
+    try {
+      if (_googleOn) {
+        _gcam?.follow(p);
+      } else {
+        _mapController.move(p, _mapController.camera.zoom);
+      }
+    } catch (e) {
+      debugPrint('Map follow-camera move skipped: $e');
+    }
+  }
+
+  void _camFit(List<LatLng> points) {
+    if (_googleOn) {
+      _gcam?.fit(points, padding: 56, maxZoom: 17);
+      return;
+    }
+    _mapController.fitCamera(
+      CameraFit.bounds(
+        bounds: LatLngBounds.fromPoints(points),
+        padding: const EdgeInsets.only(top: 90, bottom: 300, left: 50, right: 70),
+        maxZoom: 17,
+      ),
+    );
+  }
+
+  void _camNorth() {
+    try {
+      if (_googleOn) {
+        _gcam?.north();
+      } else {
+        _mapController.rotate(0);
+      }
+    } catch (_) {}
+  }
 
   /// The bus marker's animated position. The glide runs at 60 fps; it used to call setState on every
   /// frame and so rebuilt the whole screen - map included - sixty times a second. Now only the bus
@@ -101,26 +150,23 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
   @override
   void initState() {
     super.initState();
-    OfflineMap.load().then((m) {
-      if (!mounted) return;
-      setState(() {
-        _tileLayer = VectorTileLayer(
-          theme: m.theme,
-          tileProviders: TileProviders({OfflineMap.sourceName: m.provider}),
-          // While zooming, keep showing nearby zoom levels' tiles instead of blank squares.
-          maximumTileSubstitutionDifference: 3,
-          // Tiles stop at zoom 15; closer than that, they are drawn larger.
-          maximumZoom: 20,
-        );
-      });
-      _kickMap();
-    }).catchError((Object e) {
-      debugPrint('Offline map failed to load: $e');
-    });
+    // Which map to draw (App Module Settings on the portal): the saved choice at once, then the current one.
+    MapConfig.instance.addListener(_onMapSource);
+    MapConfig.instance.refresh().whenComplete(_kickMap);
     _parseInitialStudentData();
     _fetchParentLocation();
     WidgetsBinding.instance.addObserver(this);
     _fetchLocation(full: true).whenComplete(_schedule);
+  }
+
+  /// The portal switched the map: the zoom limit and the credit line follow it.
+  void _onMapSource() {
+    if (!mounted) return;
+    if (!_googleOn) _gcam = null;
+    _rotation.value = 0;
+    setState(() {});
+    // The other map starts from scratch: show the bus, stop and school again once it is there.
+    if (_initialFitted) Future.delayed(const Duration(milliseconds: 600), () { if (mounted) _fitNow(); });
   }
 
   /// Ask again after the interval the server asked for (3 s while the bus moves, longer when it is parked or
@@ -148,6 +194,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
 
   @override
   void dispose() {
+    MapConfig.instance.removeListener(_onMapSource);
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _bannerTimer?.cancel();
@@ -710,9 +757,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
       // Smooth camera follow (only while bus is moving at >3 km/h)
       if (_cameraFollowBus && _speed > 3) {
         // Don't fight user's manual pan — only follow during active movement
-        try {
-          _mapController.move(interpolated, _mapController.camera.zoom);
-        } catch (e) { debugPrint('Map follow-camera move skipped: $e'); }
+        _camFollow(interpolated);
       }
     });
 
@@ -765,6 +810,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
   /// parent dragged the map left and right. A tiny zoom nudge, repeated while the first frames settle, makes
   /// it request every visible tile. Skipped once the parent has touched the map.
   void _kickMap() {
+    if (_googleOn) return; // the official Google map loads its own tiles
     for (final ms in const [300, 1100, 2600]) {
       Future.delayed(Duration(milliseconds: ms), () {
         if (!mounted || !_cameraFollowBus || _isLoading) return;
@@ -792,19 +838,12 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
     if (points.isEmpty) return;
 
     if (points.length == 1) {
-      try { _mapController.move(points.first, 15.0); } catch (_) {}
+      _camMove(points.first, 15.0);
     } else {
       try {
-        final bounds = LatLngBounds.fromPoints(points);
-        _mapController.fitCamera(
-          CameraFit.bounds(
-            bounds: bounds,
-            padding: const EdgeInsets.only(top: 90, bottom: 300, left: 50, right: 70),
-            maxZoom: 17,
-          ),
-        );
+        _camFit(points);
       } catch (_) {
-        try { _mapController.move(points.first, 15.0); } catch (_) {}
+        _camMove(points.first, 15.0);
       }
     }
   }
@@ -853,7 +892,10 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
               ? _buildOutOfShiftScreen()
               : Stack(
               children: [
-                // 1. Flutter Map
+                // 1. The map: the official Google map, or one of the other maps (App Module Settings on the portal).
+                if (_googleOn)
+                  _googleMap(topInset)
+                else
                 FlutterMap(
                   mapController: _mapController,
                   options: MapOptions(
@@ -862,7 +904,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
                     // Street detail goes to zoom 15 and is drawn larger up to 18; closer than that
                     // the map would go blank.
                     minZoom: 8,
-                    maxZoom: 18,
+                    maxZoom: MapConfig.instance.value.maxZoom,
                     // Two fingers turn the map a full 360 degrees; the compass button (top right) snaps it back to north.
                     interactionOptions: const InteractionOptions(flags: InteractiveFlag.all),
                     // The map has its size now: make sure the offline tiles cover the whole screen.
@@ -880,7 +922,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
                     // tile.openstreetmap.org, whose usage policy does not allow apps with this
                     // many users. Until it has opened - a moment, on first use - the map shows a
                     // plain background under the markers rather than nothing at all.
-                    _tileLayer ?? const ColoredBox(color: Color(0xFFF2F0EB), child: SizedBox.expand()),
+                    _baseMap,
 
                     // Road-wise Polyline (following real road geometry via OSRM)
                     if (_roadPolyline.isNotEmpty)
@@ -974,11 +1016,11 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
                             color: Colors.white.withValues(alpha: 0.65),
                             borderRadius: BorderRadius.circular(6),
                           ),
-                          child: const Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
                             child: Text(
-                              '© ${OfflineMap.attribution}',
-                              style: TextStyle(fontSize: 9, color: Color(0xFF64748B), fontWeight: FontWeight.w500),
+                              MapConfig.instance.value.credit,
+                              style: const TextStyle(fontSize: 9, color: Color(0xFF64748B), fontWeight: FontWeight.w500),
                             ),
                           ),
                         ),
@@ -1023,7 +1065,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
                                       shadowColor: Colors.black38,
                                       child: InkWell(
                                         customBorder: const CircleBorder(),
-                                        onTap: () => _mapController.rotate(0),
+                                        onTap: _camNorth,
                                         child: Tooltip(
                                           message: 'Point north up',
                                           child: Padding(
@@ -1148,6 +1190,64 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
         const SizedBox(width: 6),
         Text(parts.join('  ·  '), style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700)),
       ]),
+    );
+  }
+
+  /// The official Google map: the same pins, bus and road line as the other maps.
+  Widget _googleMap(double topInset) {
+    final pins = <GPin>[
+      if (_schoolLocation != null)
+        GPin(id: 'school', pos: _schoolLocation!, style: PinStyle(size: 34, color: const Color(0xFF4A148C), icon: Icons.school_rounded, label: _schoolName)),
+      if (_homeLocation != null)
+        GPin(id: 'home', pos: _homeLocation!, style: const PinStyle(size: 34, color: Color(0xFF2E7D32), icon: Icons.home_rounded, label: 'Your stop')),
+      if (_parentLocation != null)
+        GPin(id: 'me', pos: _parentLocation!, style: const PinStyle(size: 30, color: Color(0xFF0288D1), icon: Icons.person_pin_circle_rounded, label: 'You')),
+    ];
+    return GoogleBusMap(
+      key: ValueKey('gmap-${MapConfig.instance.value.signature}'),
+      initialCenter: _displayBusLocation ?? _busLocation ?? _homeLocation ?? _schoolLocation ?? const LatLng(25.2854, 51.5310),
+      initialZoom: 15,
+      hybrid: MapConfig.instance.value.googleHybrid,
+      pins: pins,
+      lines: [
+        if (_roadPolyline.isNotEmpty) GLine(id: 'route', points: _lineAhead, color: const Color(0xFF2563EB)),
+      ],
+      bus: _busPos,
+      busLook: _busLook,
+      // Room for the header buttons and the trip card, so Google's logo and a fitted view stay visible.
+      padding: EdgeInsets.only(top: topInset + 56, bottom: _full ? 72 : 210),
+      onReady: (cam) {
+        _gcam = cam;
+        if (_initialFitted) WidgetsBinding.instance.addPostFrameCallback((_) { if (mounted) _fitNow(); });
+      },
+      onUserGesture: () {
+        if (_cameraFollowBus) setState(() => _cameraFollowBus = false);
+      },
+      onRotation: (r) => _rotation.value = r,
+    );
+  }
+
+  /// The bus on the official Google map: arrow facing the way it drives while moving, bus icon when stopped,
+  /// and the status pill above it.
+  BusLook _busLook() {
+    final moving = _speed > 3;
+    final active = _isActiveWindow;
+    final color = active ? (moving ? const Color(0xFFFF8F00) : const Color(0xFF78909C)) : Colors.blueGrey;
+    return BusLook(
+      body: PinStyle(
+        size: 40,
+        color: color,
+        border: 2.5,
+        icon: moving ? Icons.navigation_rounded : Icons.directions_bus_rounded,
+        halo: moving ? const Color(0x33FF8F00) : null,
+      ),
+      heading: _busBearing,
+      rotate: moving,
+      pill: PillStyle(
+        text: !active ? 'OFFLINE' : (moving ? '${_speed.toInt()} km/h' : (_busParked ? 'PARKED' : 'STOPPED')),
+        color: active ? const Color(0xFF1E3C72) : const Color(0xFF616161),
+        dot: active ? (moving ? Colors.greenAccent : Colors.orangeAccent) : null,
+      ),
     );
   }
 
@@ -1470,7 +1570,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
     setState(() => _cameraFollowBus = true);
     final p = _displayBusLocation ?? _busLocation ?? _homeLocation;
     if (p != null) {
-      try { _mapController.move(p, 16.5); } catch (_) {}
+      _camMove(p, 16.5);
     }
   }
 

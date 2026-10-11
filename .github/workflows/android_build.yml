@@ -45,11 +45,24 @@ jobs:
           echo "keyAlias=smartgps" >> android/key.properties
           echo "storeFile=smartgps-release.jks" >> android/key.properties
 
+      # The Google Maps API key (official Google map) comes from the GOOGLE_MAPS_API_KEY secret. Gradle puts it
+      # into the manifest; --dart-define tells the app it has one. Without the secret the app is built exactly
+      # as before and simply uses the other maps.
       - name: Build Signed AAB (Play Store)
-        run: flutter build appbundle --release
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+        run: |
+          DEFINE=""
+          if [ -n "$GOOGLE_MAPS_API_KEY" ]; then DEFINE="--dart-define=GMAPS_KEY_PRESENT=true"; echo "Google Maps key: present"; else echo "Google Maps key: not set"; fi
+          flutter build appbundle --release $DEFINE
 
       - name: Build Signed APK
-        run: flutter build apk --release
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+        run: |
+          DEFINE=""
+          if [ -n "$GOOGLE_MAPS_API_KEY" ]; then DEFINE="--dart-define=GMAPS_KEY_PRESENT=true"; fi
+          flutter build apk --release $DEFINE
 
       - name: Upload AAB
         uses: actions/upload-artifact@v4

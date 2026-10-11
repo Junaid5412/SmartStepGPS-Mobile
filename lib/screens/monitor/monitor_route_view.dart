@@ -6,10 +6,10 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:vector_map_tiles/vector_map_tiles.dart';
 
 import '../../services/api_service.dart';
-import '../../services/offline_map.dart';
+import '../../services/map_config.dart';
+import '../../widgets/google_bus_map.dart';
 import 'monitor_actions.dart';
 import 'monitor_shift_view.dart';
 import 'monitor_store.dart';
@@ -79,7 +79,42 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
 
   final _map = MapController();
   bool _cardOpen = false; // the map's stop card: small, or opened upwards
-  Widget? _tiles;
+  static const Widget _baseMap = BaseMapLayer(); // follows the portal's map choice by itself
+
+  /// The official Google map's camera, while that map is on screen; and the bus position it follows.
+  GoogleMapCam? _gcam;
+  final ValueNotifier<LatLng?> _shownPos = ValueNotifier(null);
+  bool get _googleOn => MapConfig.instance.value.isGoogleSdk;
+
+  void _camFollow(LatLng p) {
+    try {
+      if (_googleOn) {
+        _gcam?.follow(p);
+      } else {
+        _map.move(p, _map.camera.zoom);
+      }
+    } catch (_) {}
+  }
+
+  void _camNorth() {
+    try {
+      if (_googleOn) {
+        _gcam?.north();
+      } else {
+        _map.rotate(0);
+      }
+    } catch (_) {}
+  }
+
+  void _camMoveNorth(LatLng p, double minZoom) {
+    try {
+      if (_googleOn) {
+        _gcam?.moveNorth(p, minZoom);
+      } else {
+        _map.moveAndRotate(p, math.max(_map.camera.zoom, minZoom), 0);
+      }
+    } catch (_) {}
+  }
   bool _mapReady = false;
   bool _fitted = false;
   bool _listMode = false;
@@ -127,15 +162,9 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
   void initState() {
     super.initState();
     _glide = AnimationController(vsync: this, duration: const Duration(milliseconds: 950))..addListener(_onGlide);
-    OfflineMap.load().then((m) {
-      if (!mounted) return;
-      setState(() => _tiles = VectorTileLayer(
-            theme: m.theme,
-            tileProviders: TileProviders({OfflineMap.sourceName: m.provider}),
-            maximumTileSubstitutionDifference: 3,
-            maximumZoom: 20,
-          ));
-    }).catchError((Object e) => debugPrint('Offline map failed to load: $e'));
+    // Which map to draw (App Module Settings on the portal).
+    MapConfig.instance.addListener(_onMapSource);
+    MapConfig.instance.refresh();
     SharedPreferences.getInstance().then((p) {
       if (mounted) setState(() => _listMode = p.getString(_prefMode) == 'list');
     });
@@ -151,14 +180,27 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
 
   @override
   void dispose() {
+    MapConfig.instance.removeListener(_onMapSource);
     store.removeListener(_onStore);
     _stopTracking();
     _glide.dispose();
     _shown.dispose();
     _phoneDot.dispose();
+    _shownPos.dispose();
     _rotation.dispose();
     _bannerTimer?.cancel();
     super.dispose();
+  }
+
+  /// The portal switched the map: the zoom limit and the credit line follow it.
+  void _onMapSource() {
+    if (!mounted) return;
+    if (!_googleOn) _gcam = null;
+    _rotation.value = 0;
+    setState(() {
+      _mapReady = false;   // the other map starts from scratch
+      _fitted = false;
+    });
   }
 
   ShiftWindow? get _shift {
@@ -320,7 +362,8 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     if (dh > 180) dh -= 360;
     final head = (_headFrom + dh * t) % 360;
     _shown.value = _Fix(pos, head);
-    if (_follow && _mapReady && !_listMode) _map.move(pos, _map.camera.zoom);
+    _shownPos.value = pos;
+    if (_follow && _mapReady && !_listMode) _camFollow(pos);
   }
 
   // ---------------------------------------------------------------------------------------- stops
@@ -656,15 +699,22 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
         _fitted = true;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted || _listMode) return;
-          _map.fitCamera(CameraFit.coordinates(
-            coordinates: pts,
-            maxZoom: 17,
-            padding: EdgeInsets.fromLTRB(40, 70, 70, MediaQuery.of(context).size.height * 0.25),
-          ));
+          if (_googleOn) {
+            _gcam?.fit(pts, padding: 56, maxZoom: 17);
+          } else {
+            _map.fitCamera(CameraFit.coordinates(
+              coordinates: pts,
+              maxZoom: 17,
+              padding: EdgeInsets.fromLTRB(40, 70, 70, MediaQuery.of(context).size.height * 0.25),
+            ));
+          }
         });
       }
     }
     return Stack(children: [
+      if (_googleOn)
+        _googleMap(w, stops, next, center)
+      else
       FlutterMap(
         mapController: _map,
         options: MapOptions(
@@ -673,7 +723,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
           // The map has street detail up to zoom 15 and is drawn larger up to 18; closer than
           // that it would go blank, and Qatar fits in zoom 8.
           minZoom: 8,
-          maxZoom: 18,
+          maxZoom: MapConfig.instance.value.maxZoom,
           // Two fingers turn the map a full 360 degrees; the compass button snaps it back to north.
           interactionOptions: const InteractionOptions(flags: InteractiveFlag.all),
           onMapReady: () => setState(() => _mapReady = true),
@@ -683,7 +733,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
           },
         ),
         children: [
-          _tiles ?? const ColoredBox(color: Color(0xFFF2F0EB), child: SizedBox.expand()),
+          _baseMap,
           if (_plan != null && (_lineNow ?? _plan!.line).length > 1)
             PolylineLayer(polylines: [
               Polyline(points: _lineNow ?? _plan!.line, strokeWidth: 6, color: w.color.withValues(alpha: 0.85), borderStrokeWidth: 2, borderColor: Colors.white),
@@ -735,11 +785,11 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
                   ]),
           ),
           // Licence credit: under the position label, clear of the stop card at the bottom.
-          const Align(
+          Align(
             alignment: Alignment.topLeft,
             child: Padding(
-              padding: EdgeInsets.fromLTRB(16, 50, 8, 4),
-              child: Text('© OpenStreetMap', style: TextStyle(fontSize: 9, color: Color(0xFF64748B))),
+              padding: const EdgeInsets.fromLTRB(16, 50, 8, 4),
+              child: Text(MapConfig.instance.value.credit, style: const TextStyle(fontSize: 9, color: Color(0xFF64748B))),
             ),
           ),
         ],
@@ -769,7 +819,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
           _fab(_follow ? Icons.navigation_rounded : Icons.navigation_outlined, _follow ? 'Following the bus' : 'Follow the bus', () {
             setState(() => _follow = true);
             final f = _shown.value;
-            if (f != null && _mapReady) _map.moveAndRotate(f.pos, math.max(_map.camera.zoom, 16), 0);
+            if (f != null && _mapReady) _camMoveNorth(f.pos, 16);
           }, on: _follow),
           const SizedBox(height: 10),
           _fab(Icons.format_list_numbered_rounded, 'All stops', () {
@@ -790,7 +840,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
                   shadowColor: Colors.black38,
                   child: InkWell(
                     customBorder: const CircleBorder(),
-                    onTap: () => _map.rotate(0),
+                    onTap: _camNorth,
                     child: Tooltip(
                       message: 'Point north up',
                       child: Padding(
@@ -1126,6 +1176,58 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
           ),
         ),
       );
+
+  /// The official Google map: the stops, the monitor's phone, the bus and the planned line.
+  Widget _googleMap(ShiftWindow w, List<_Stop> stops, _Stop? next, LatLng center) {
+    final pins = <GPin>[
+      for (final s in stops)
+        if (s.point != null) GPin(id: 'stop_${s.key}', pos: s.point!, style: _pinStyle(s, next, w), onTap: () => _choose(s)),
+      if (_phoneDot.value != null)
+        GPin(id: 'phone', pos: _phoneDot.value!, style: const PinStyle(size: 18, color: Color(0xFF2563EB), border: 3)),
+    ];
+    return GoogleBusMap(
+      key: ValueKey('gmap-${MapConfig.instance.value.signature}'),
+      initialCenter: center,
+      initialZoom: 16,
+      hybrid: MapConfig.instance.value.googleHybrid,
+      pins: pins,
+      lines: [
+        if (_plan != null && (_lineNow ?? _plan!.line).length > 1)
+          GLine(id: 'plan', points: _lineNow ?? _plan!.line, color: w.color.withValues(alpha: 0.85)),
+      ],
+      bus: _shownPos,
+      busLook: () => BusLook(
+        body: PinStyle(size: 34, color: Colors.white, border: 0, icon: Icons.navigation_rounded, fg: w.color, halo: w.color.withValues(alpha: 0.18)),
+        heading: _shown.value?.heading ?? 0,
+        rotate: true,
+      ),
+      padding: EdgeInsets.only(top: 50, bottom: MediaQuery.of(context).size.height * 0.22),
+      onReady: (cam) {
+        _gcam = cam;
+        setState(() => _mapReady = true);
+      },
+      onUserGesture: () {
+        if (_follow) setState(() => _follow = false);
+      },
+      onRotation: (r) => _rotation.value = r,
+    );
+  }
+
+  /// A stop's pin on the official Google map - the same colours and numbers as [_pin].
+  PinStyle _pinStyle(_Stop s, _Stop? next, ShiftWindow w) {
+    final isNext = next?.key == s.key;
+    final idx = _planKeys.indexOf(s.key);
+    final Color bg = switch (s.state) {
+      _St.done => MonitorColors.green,
+      _St.leave => const Color(0xFFCBD5E1),
+      _St.todo => isNext ? w.color : const Color(0xFF64748B),
+    };
+    final size = isNext ? 40.0 : 30.0;
+    if (s.school) return PinStyle(size: size, color: bg, border: isNext ? 3 : 2, icon: Icons.school_rounded);
+    if (s.state == _St.leave) return PinStyle(size: size, color: bg, border: 2, text: 'L', fg: const Color(0xFF475569));
+    if (s.state == _St.done) return PinStyle(size: size, color: bg, border: 2, icon: Icons.check_rounded);
+    return PinStyle(size: size, color: bg, border: isNext ? 3 : 2, text: idx >= 0 ? '${idx + 1}' : '•');
+  }
 
   Widget _arrow(ShiftWindow w) => Stack(alignment: Alignment.center, children: [
         Container(width: 46, height: 46, decoration: BoxDecoration(color: w.color.withValues(alpha: 0.18), shape: BoxShape.circle)),
