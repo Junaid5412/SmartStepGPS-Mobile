@@ -12,6 +12,7 @@ import 'package:vector_map_tiles/vector_map_tiles.dart';
 import '../services/api_service.dart';
 import '../services/offline_map.dart';
 import '../widgets/custom_loading.dart';
+import '../widgets/module_gate.dart';
 
 class MapScreen extends StatefulWidget {
   final Map<String, dynamic> student;
@@ -59,7 +60,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   bool? _cardOpenChoice; // trip card details: the parent's choice; until then open on taller screens
   bool get _cardOpen => _cardOpenChoice ?? false; // small by default; a tap opens the details above
   String? _pickedAt, _droppedAt, _otherEvent; // this trip's times (HH:mm) and absent / leave / by_parent
-  Map<String, dynamic>? _crew; // monitor and driver: names and phones
+  Map<String, dynamic>? _crew; // the bus monitor: name and phone (parents are not shown the driver)
   double _busBearing = 0.0;   // heading in degrees (0=north, 90=east)
   LatLng? _bearingAnchor;     // where that heading was measured from
 
@@ -103,6 +104,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           maximumZoom: 20,
         );
       });
+      _kickMap();
     }).catchError((Object e) {
       debugPrint('Offline map failed to load: $e');
     });
@@ -645,8 +647,33 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
   void _fitAllMarkers() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _fitNow();
+      if (mounted) {
+        _fitNow();
+        _kickMap();
+      }
     });
+  }
+
+  /// The bundled vector layer asks for its tiles when the camera changes, and the first fit - or the layer
+  /// swapping in - can happen before the map has its size. That left part of the screen blank until the
+  /// parent dragged the map left and right. A tiny zoom nudge, repeated while the first frames settle, makes
+  /// it request every visible tile. Skipped once the parent has touched the map.
+  void _kickMap() {
+    for (final ms in const [300, 1100, 2600]) {
+      Future.delayed(Duration(milliseconds: ms), () {
+        if (!mounted || !_cameraFollowBus || _isLoading) return;
+        try {
+          final cam = _mapController.camera;
+          _mapController.move(cam.center, cam.zoom + 0.02);
+          Future.delayed(const Duration(milliseconds: 120), () {
+            if (!mounted || !_cameraFollowBus) return;
+            try {
+              _mapController.move(cam.center, cam.zoom);
+            } catch (_) {}
+          });
+        } catch (_) {}
+      });
+    }
   }
 
   void _fitNow() {
@@ -688,6 +715,11 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
+    // Switched off on the portal while this screen is open: it is replaced at once by a short notice.
+    return ModuleGate(moduleKey: 'bus_tracking', title: 'Bus Tracking', child: _buildScreen(context));
+  }
+
+  Widget _buildScreen(BuildContext context) {
     final topInset = _full ? MediaQuery.of(context).padding.top : 0.0;
     return PopScope(
       canPop: !_full,
@@ -727,6 +759,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                     maxZoom: 18,
                     // North always up: no two-finger rotating, which left the map turned.
                     interactionOptions: const InteractionOptions(flags: InteractiveFlag.all & ~InteractiveFlag.rotate),
+                    // The map has its size now: make sure the offline tiles cover the whole screen.
+                    onMapReady: _kickMap,
                     // Disable follow mode when user manually pans the map (like Uber)
                     onPositionChanged: (pos, hasGesture) {
                       if (hasGesture && _cameraFollowBus) {
@@ -1212,18 +1246,28 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         _ => ('Not travelling this trip', _muted, Icons.event_busy_rounded),
       };
     }
+    // The bus has stopped reporting: say so, rather than describe a position that is out of date.
+    final age = _ageNow;
+    final silent = age != null && age > 180;
+    // Close and about to get there: within about two minutes and a short distance.
+    final near = !silent && _etaMinutes > 0 && _etaMinutes <= 2 && _roadDistanceKm > 0 && _roadDistanceKm < 1.2;
+    const amber = Color(0xFFD97706);
     if (morning) {
       switch (_childStage) {
         case 'on_bus':
+          if (near && _targetLabel == 'to school') return ('Arriving at school', amber, Icons.school_rounded);
           return ('Picked up${_pickedAt != null ? ' at ${_t12(_pickedAt)}' : ''}', _green, Icons.directions_bus_rounded);
         case 'done':
           return ('Reached school${_droppedAt != null ? ' at ${_t12(_droppedAt)}' : ''}', _green, Icons.school_rounded);
         default:
-          return (_etaMinutes > 0 ? 'Bus is on the way to your stop' : 'Waiting for the bus', _blue, Icons.near_me_rounded);
+          if (silent) return ('Waiting for the bus signal', _muted, Icons.wifi_off_rounded);
+          if (near) return ('Bus is arriving at your stop', amber, Icons.notifications_active_rounded);
+          return (_etaMinutes > 0 ? 'Bus is on the way to your home' : 'Waiting for the bus', _blue, Icons.near_me_rounded);
       }
     }
     switch (_childStage) {
       case 'on_bus':
+        if (near && _targetLabel != 'to school') return ('Bus is arriving at your stop', amber, Icons.notifications_active_rounded);
         return ('On the bus${_pickedAt != null ? ' since ${_t12(_pickedAt)}' : ''}', _green, Icons.directions_bus_rounded);
       case 'done':
         return ('Dropped home${_droppedAt != null ? ' at ${_t12(_droppedAt)}' : ''}', _green, Icons.home_rounded);
@@ -1232,6 +1276,46 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     }
   }
 
+  /// The line under the status: which trip this is and where the bus is heading right now.
+  ///   Morning: on the way to the home for pickup -> picked up, on the way to school -> at school.
+  ///   Afternoon: school pickup -> on the way home -> home.
+  String get _phaseLine {
+    final morning = _currentShift == 'morning';
+    final trip = morning ? 'Morning trip' : 'Afternoon trip';
+    String phase;
+    if (_otherEvent != null && _childStage == 'done') {
+      phase = 'Not travelling';
+    } else if (morning) {
+      switch (_childStage) {
+        case 'on_bus':
+          phase = 'On the way to school';
+          break;
+        case 'done':
+          phase = 'Trip complete';
+          break;
+        default:
+          phase = 'Heading to your home for pickup';
+      }
+    } else {
+      switch (_childStage) {
+        case 'on_bus':
+          phase = 'On the way home';
+          break;
+        case 'done':
+          phase = 'Trip complete';
+          break;
+        default:
+          phase = 'School pickup, then home';
+      }
+    }
+    String? stops;
+    if (_stopsBefore != null && _travelling) {
+      stops = _stopsBefore == 0
+          ? (_targetLabel == 'to school' ? 'school is next' : 'your stop is next')
+          : '$_stopsBefore stop${_stopsBefore == 1 ? '' : 's'} before ${_targetLabel == 'to school' ? 'school' : 'yours'}';
+    }
+    return [trip, phase, if (stops != null) stops].join(' · ');
+  }
   void _locateBus() {
     _showBanner('Locating live bus position...');
     _fetchLocation();
@@ -1295,15 +1379,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                         Text(text, maxLines: 1, overflow: TextOverflow.ellipsis,
                             style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
                         Text(
-                            [
-                              _currentShift == 'morning' ? 'Morning trip' : 'Evening trip',
-                              if (_stopsBefore != null && _travelling)
-                                _stopsBefore == 0
-                                    ? (_targetLabel == 'to school' ? 'school is next' : 'your stop is next')
-                                    : '$_stopsBefore stop${_stopsBefore == 1 ? '' : 's'} before ${_targetLabel == 'to school' ? 'school' : 'yours'}'
-                              else
-                                _currentShift == 'morning' ? 'home to school' : 'school to home',
-                            ].join(' · '),
+                            _phaseLine,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(fontSize: 11, color: _muted)),
                       ]),
                     ),
@@ -1404,7 +1482,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   Widget _timeline() {
     final morning = _currentShift == 'morning';
     final step = _childStage == 'done' ? 2 : (_childStage == 'on_bus' ? 1 : 0);
-    final labels = morning ? ['Pickup', 'On the bus', 'At school'] : ['At school', 'On the bus', 'Home'];
+    final labels = morning ? ['Pickup', 'On the way', 'At school'] : ['Boarding', 'On the way', 'Home'];
     final times = [
       morning ? (_pickedAt != null ? _t12(_pickedAt) : '') : '',
       _pickedAt != null ? _t12(_pickedAt) : '',
@@ -1460,15 +1538,14 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         ),
       );
 
-  /// Who the parent may call - as the school allows (App Module Settings): both side by side, or
-  /// one on a full-width row with a labelled Call button, or nobody.
+  /// Who the parent may call: the bus monitor, if the school allows it (App Module Settings) - on a full-width
+  /// row with a labelled Call button. The driver is never shown to parents.
   List<Widget> _crewRow() {
     final c = _crew;
     if (c == null) return const [];
     String s(String k) => '${c[k] ?? ''}'.trim();
     final people = [
       if (s('monitor_name').isNotEmpty) ('Bus monitor', s('monitor_name'), s('monitor_phone')),
-      if (s('driver_name').isNotEmpty) ('Driver', s('driver_name'), s('driver_phone')),
     ];
     if (people.isEmpty) return const [];
 

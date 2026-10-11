@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../widgets/custom_loading.dart';
+import '../widgets/module_gate.dart';
 
 class AnnouncementsScreen extends StatefulWidget {
   const AnnouncementsScreen({Key? key}) : super(key: key);
@@ -49,6 +50,11 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Switched off on the portal while this screen is open: it is replaced at once by a short notice.
+    return ModuleGate(moduleKey: 'announcements', title: 'Announcements', child: _buildScreen(context));
+  }
+
+  Widget _buildScreen(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.grey[100],
       appBar: AppBar(

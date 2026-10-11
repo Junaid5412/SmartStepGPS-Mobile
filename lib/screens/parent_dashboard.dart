@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show mapEquals;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
+import '../services/module_watcher.dart';
 import '../widgets/custom_loading.dart';
 import 'map_screen.dart';
 import 'login_screen.dart';
@@ -44,6 +45,10 @@ class _ParentDashboardState extends State<ParentDashboard> with WidgetsBindingOb
     _pageController = PageController(viewportFraction: 0.93);
     _startBannerTimer();
     _settingsTimer = Timer.periodic(const Duration(seconds: 10), (_) => _loadSettings());
+    // The module switches are watched every few seconds (not only with the 10 s settings read), so a module
+    // switched off on the portal leaves the dashboard - and any module screen that is open - almost at once.
+    ModuleWatcher.instance.addListener(_syncModules);
+    ModuleWatcher.instance.start();
     _loadProfile();
     _loadSettings();
     _fetchStudents();
@@ -54,6 +59,8 @@ class _ParentDashboardState extends State<ParentDashboard> with WidgetsBindingOb
     WidgetsBinding.instance.removeObserver(this);
     _bannerTimer?.cancel();
     _settingsTimer?.cancel();
+    ModuleWatcher.instance.removeListener(_syncModules);
+    ModuleWatcher.instance.stop();
     _pageController.dispose();
     super.dispose();
   }
@@ -61,7 +68,10 @@ class _ParentDashboardState extends State<ParentDashboard> with WidgetsBindingOb
   // Back in the app: the school may have changed which modules parents see.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && mounted) _loadSettings();
+    if (state == AppLifecycleState.resumed && mounted) {
+      _loadSettings();
+      ModuleWatcher.instance.refresh();
+    }
   }
 
   void _startBannerTimer() {
@@ -133,11 +143,25 @@ class _ParentDashboardState extends State<ParentDashboard> with WidgetsBindingOb
     } catch (e) { debugPrint('Parent dashboard: profile load failed: $e'); }
   }
 
+  /// The module switches changed (the watcher polls every few seconds): redraw the cards.
+  void _syncModules() {
+    if (!mounted) return;
+    final m = ModuleWatcher.instance.modules;
+    final next = <String, bool>{
+      'attendance': m['attendance'] != false,
+      'bus_tracking': m['bus_tracking'] != false,
+      'announcements': m['announcements'] != false,
+      'leave': m['leave'] != false,
+    };
+    if (!mapEquals(next, _modules)) setState(() => _modules = next);
+  }
+
   Future<void> _loadSettings() async {
     try {
       final res = await ApiService.getSettings();
       if (res['success'] != true || !mounted) return;
       final m = res['modules'];
+      if (m is Map) ModuleWatcher.instance.apply(m);
       final modules = m is Map
           ? {
               'attendance': m['attendance'] != false,

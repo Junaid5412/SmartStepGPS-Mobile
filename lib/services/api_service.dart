@@ -124,6 +124,21 @@ class ApiService {
     return {'success': false};
   }
 
+  /// The school's module switches only (App Module Settings) - small enough to ask every few seconds, so a
+  /// module switched off on the portal disappears from the phone at once. See ModuleWatcher.
+  static Future<Map<String, dynamic>> getModules() async {
+    final token = await getToken();
+    if (token.isEmpty) return {'success': false};
+    final response = await http.get(
+      Uri.parse('$baseUrl/modules.php'),
+      headers: {'Authorization': 'Bearer $token'},
+    ).timeout(const Duration(seconds: 8));
+    if (response.statusCode == 200) {
+      return _safeDecode(response.body);
+    }
+    return {'success': false};
+  }
+
   static Future<Map<String, dynamic>> getParentStudents() async {
     final token = await getToken();
     final response = await http.get(

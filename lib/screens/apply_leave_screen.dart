@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../services/api_service.dart';
+import '../widgets/module_gate.dart';
 
 /// Apply for Leave - the parent tells the bus a child will not ride it. Four plain choices cover the
 /// real cases: Absent, I'll drop (morning), I'll pick up (evening), No bus today. The bus monitor sees
@@ -248,6 +249,11 @@ class _ApplyLeaveScreenState extends State<ApplyLeaveScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Switched off on the portal while this screen is open: it is replaced at once by a short notice.
+    return ModuleGate(moduleKey: 'leave', title: 'Apply for Leave', child: _buildScreen(context));
+  }
+
+  Widget _buildScreen(BuildContext context) {
     final oneChild = widget.students.length == 1;
     final childName = oneChild ? '${widget.students.first['name'] ?? ''}' : null;
     return Scaffold(
