@@ -38,6 +38,13 @@ class PhoneLocation {
 
   bool get running => _gps != null || _starting;
 
+  /// The latest raw phone fix when it is less than 15 s old - for the GPS stamp on attendance.
+  Position? get recentFix {
+    final p = _last, t = at;
+    if (p == null || t == null || DateTime.now().difference(t).inSeconds > 15) return null;
+    return p;
+  }
+
   /// Called whenever the roster or the clock changes: run while a shift is open, send while
   /// that shift still has children to pick up or drop off.
   void sync(MonitorStore store) {

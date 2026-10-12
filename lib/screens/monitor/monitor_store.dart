@@ -257,6 +257,20 @@ class MonitorStore extends ChangeNotifier {
 
   String? eventOf(dynamic student, String shift) => statusOf(student, shift)?['event_type']?.toString();
 
+  /// The server has just recorded [type] (pickup / dropoff / absent ...) for these children: show it at
+  /// once - the next stop and the route move on straight away - and let the roster reload confirm it.
+  void markedLocally(Iterable<dynamic> marked, String shift, String type) {
+    var changed = false;
+    for (final s in marked) {
+      if (s is! Map) continue;
+      final key = shift == 'morning' ? 'morning_status' : 'afternoon_status';
+      final cur = s[key];
+      s[key] = {if (cur is Map) ...cur, 'event_type': type};
+      changed = true;
+    }
+    if (changed) notifyListeners();
+  }
+
   Stage stageOf(dynamic student, String shift) {
     final e = eventOf(student, shift);
     if (e == null) return Stage.waiting;

@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/api_service.dart';
 import 'monitor_store.dart';
+import 'phone_location.dart';
 
 /// Everything a monitor can do to a child or a family, shared by the shift screen's cards.
 class MonitorActions {
@@ -47,6 +48,7 @@ class MonitorActions {
         pos == null ? Colors.orange.shade800 : StatusStyle.color(type),
         seconds: pos == null ? 3 : 1,
       );
+      store.markedLocally([student], w.key, type); // the next stop and route move on now, not after the reload
       await store.load(silent: true);
     } else {
       _snack((res['error'] ?? 'Could not record attendance').toString(), MonitorColors.red, seconds: 4);
@@ -102,12 +104,14 @@ class MonitorActions {
     final pos = await _currentPosition();
     var done = 0;
     String? err;
+    final marked = <dynamic>[];
     for (final s in students) {
       final id = s['id'] is int ? s['id'] as int : int.tryParse('${s['id']}') ?? 0;
       try {
         final r = await ApiService.markAttendance(id, type, pos?.latitude, pos?.longitude, shift: w.key);
         if (r['success'] == true) {
           done++;
+          marked.add(s);
         } else {
           err ??= (r['error'] ?? 'Could not record').toString();
         }
@@ -121,6 +125,7 @@ class MonitorActions {
       err == null ? color : MonitorColors.red,
       seconds: err == null ? 2 : 5,
     );
+    store.markedLocally(marked, w.key, type);
     await store.load(silent: true);
   }
 
@@ -237,6 +242,10 @@ class MonitorActions {
   /// monitor with no signal must still be able to record that a child boarded. The stamp is
   /// evidence, not a precondition.
   Future<Position?> _currentPosition() async {
+    // The phone's GPS is already running during a shift: a fix from the last few seconds is used at once,
+    // instead of waiting up to 6 s for a new one before every mark.
+    final recent = PhoneLocation.instance.recentFix;
+    if (recent != null) return recent;
     try {
       if (!await Geolocator.isLocationServiceEnabled()) return null;
       var perm = await Geolocator.checkPermission();

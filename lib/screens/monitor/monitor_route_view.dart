@@ -23,12 +23,19 @@ import 'route_planner.dart';
 /// the best order, either on a live MAP or as a LIST (a switch at the top, remembered per phone);
 /// both use the same stops, order and buttons. When no shift is open it shows the countdown.
 ///
-/// WHERE THE BUS IS: the bus's own GPS tracker is the truth - it is in the bus. The monitor's phone
-/// is shown too (a small blue dot) and takes over whenever the tracker has gone quiet (no signal),
-/// so the page keeps working either way.
+/// WHERE THE BUS IS: the bus's own GPS tracker is the truth - it is in the bus. It is asked as often
+/// as the server says (every 3 s while driving), and its position counts while it is reporting: a
+/// fix from the last minute, or - the bus standing at a stop or parked - whatever the server says
+/// is still a live tracker (a standing tracker only sends every few minutes, and it has not moved).
+/// The monitor's phone is always shown as a small blue dot ("you"). It stands in for the bus ONLY when
+/// the school has the Monitor Phone Backup switched on for this bus AND the tracker has lost its GPS
+/// or signal; switched off, the bus stays at the tracker's last position, marked "no signal".
 ///
-/// - The next stop is always the NEAREST unfinished one; the rest follow in the shortest order
-///   (RoutePlanner), re-worked when a stop is done, when the nearest changes, or every minute.
+/// - The order: the shortest one-way drive from where the bus is (RoutePlanner) - near stops first,
+///   far ones last; the school first in the evening and last in the morning. Re-worked at once when
+///   a child is picked up or dropped (an instant estimate, then the road plan), when the bus leaves
+///   the planned road, and every few minutes.
+/// - The bus moves ALONG the planned road between fixes, and the part already driven disappears.
 /// - Every stop shows when the bus should reach it ("Reach 7:45 AM").
 /// - Stops whose children are all on leave for this trip are greyed out and left off the route.
 /// - Arriving within [_arriveM] of any stop opens it, whatever the plan said.
@@ -125,9 +132,15 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
 
   // ---- where the bus is ---------------------------------------------------------------------------
   bool _phoneOn = false;
-  Timer? _trackerPoll;
+  bool _tracking = false;
+  Timer? _trackerPoll; // the next tracker poll (rescheduled after each answer, at the server's pace)
   LatLng? _busPos; // the tracker
-  DateTime? _busAt;
+  DateTime? _busAt; // when the server received that fix (from its age_sec - not this phone's clock)
+  bool _trackerOnline = false; // the server's verdict: the tracker is reporting
+  String _trackerState = ''; // moving / idle / parked / nosignal / offline
+  double _trackerSpeed = 0; // km/h
+  double? _trackerCourse;
+  bool _phoneBackup = false; // the school allows the monitor's phone to stand in for the tracker
   LatLng? _phonePos; // the monitor's phone
   DateTime? _phoneAt;
   LatLng? _bestPrev;
@@ -139,6 +152,10 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
   final ValueNotifier<double> _rotation = ValueNotifier(0); // the map's turn in degrees (0 = north up)
   late final AnimationController _glide;
   LatLng? _glideFrom, _glideTo;
+  double? _glideAlongFrom, _glideAlongTo; // gliding ALONG the planned road (metres along it), when on it
+  double? _targetAlong; // where on the road the glide ends
+  double? _shownAlong; // where on the road the bus is drawn now (null: off the road)
+  DateTime _lastTrim = DateTime.now();
   double _headFrom = 0, _headTo = 0;
   DateTime _lastTarget = DateTime.now();
   bool _follow = true;
@@ -149,10 +166,15 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
   final Map<String, double> _legSec = {}; // road time to each stop from the one before it
   double _leadStraight = 0; // straight-line metres from the bus to the next stop when planned
   List<LatLng>? _lineNow; // the planned line, with the part already driven cut off
+  RouteLine? _route; // the planned line, measured: the bus is put on it and followed along it
+  double? _along; // how far along it the bus last was
+  DateTime? _offSince; // the bus has been off the planned road since then
   String _planSig = '';
   DateTime _planAt = DateTime.fromMillisecondsSinceEpoch(0);
   LatLng? _planFrom;
   bool _planning = false;
+  bool _planAgain = false; // something changed while a plan was being worked out
+  int _planGen = 0; // a newer plan makes a slower, older answer worthless
   String? _activeKey; // the stop she is at, or chose
   final Set<String> _skipped = {};
   String? _banner;
@@ -233,22 +255,18 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
 
   void _syncTracking() {
     final want = widget.active && _shift != null;
-    if (want && _trackerPoll == null) {
+    if (want && !_tracking) {
       _startTracking();
-    } else if (!want && _trackerPoll != null) {
+    } else if (!want && _tracking) {
       _stopTracking();
     }
   }
 
   void _startTracking() {
-    // 1. The bus tracker - the real position of the bus - every 5 seconds.
-    if (store.busDeviceId > 0) {
-      _pollTracker();
-      _trackerPoll = Timer.periodic(const Duration(seconds: 5), (_) => _pollTracker());
-    } else {
-      _trackerPoll = Timer.periodic(const Duration(hours: 1), (_) {}); // marks tracking as running
-    }
-    // 2. The monitor's phone - shown, and used whenever the tracker has no signal.
+    _tracking = true;
+    // 1. The bus tracker - the real position of the bus - as often as the server says (3 s driving).
+    if (store.busDeviceId > 0) _pollTracker();
+    // 2. The monitor's phone - always shown as "you"; the bus only when the backup is allowed.
     _startPhone();
     // 3. Arrival times count down with the clock.
     _clock = Timer.periodic(const Duration(seconds: 20), (_) {
@@ -274,31 +292,64 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     _onAnyFix();
   }
 
+  /// A number from the server's JSON, whether it arrives as a number or as text.
+  static double? _numOf(dynamic v) => v is num ? v.toDouble() : double.tryParse('${v ?? ''}');
+
+  /// One tracker poll; the next is scheduled when this one has answered, at the pace the server asks
+  /// for (3 s moving, 5 s standing, up to 10 s parked), so a slow answer never piles polls up.
   Future<void> _pollTracker() async {
+    _trackerPoll?.cancel();
+    var next = 5;
     try {
-      final r = await ApiService.getBusLocation(store.busDeviceId);
-      final loc = r['location'] ?? r['last_known_location'];
-      if (loc is! Map || loc['lat'] == null || loc['lng'] == null) return;
-      // The server may answer with this very phone's position (the parents' backup) - not the tracker.
-      if (loc['source'] == 'monitor') {
-        if (_phonePos == null) {
-          _phonePos = LatLng((loc['lat'] as num).toDouble(), (loc['lng'] as num).toDouble());
-          _phoneAt = DateTime.tryParse('${loc['updated_at'] ?? ''}'.replaceFirst(' ', 'T')) ?? DateTime.now();
-          _onAnyFix();
-        }
+      final r = await ApiService.getBusLocation(store.busDeviceId, lite: true).timeout(const Duration(seconds: 10));
+      if (!_tracking || !mounted) return;
+      final ps = r['poll_sec'];
+      if (ps is num) next = ps.toInt().clamp(2, 10);
+      if (r['phone_backup'] is bool) _phoneBackup = r['phone_backup'] as bool;
+      final bs = r['bus_status'];
+      if (bs is Map) {
+        _trackerState = '${bs['state'] ?? ''}';
+        _trackerOnline = bs['online'] == true;
+      }
+      // The tracker's OWN fix. (The server's "location" can be this very phone's backup position for parents.)
+      Map? loc = r['tracker_location'] is Map ? r['tracker_location'] as Map : null;
+      if (loc == null) {
+        final l = r['location'] ?? r['last_known_location'];
+        if (l is Map && l['source'] != 'monitor') loc = l;
+      }
+      final lat = _numOf(loc?['lat']), lng = _numOf(loc?['lng']);
+      if (loc == null || lat == null || lng == null) {
+        setState(() {});
         return;
       }
-      final p = LatLng((loc['lat'] as num).toDouble(), (loc['lng'] as num).toDouble());
-      // The fix's own time (Qatar time, like this phone) - so a tracker repeating an old position
-      // while it has no signal is recognised as stale, not as a bus standing still.
-      final at = DateTime.tryParse('${loc['updated_at'] ?? ''}'.replaceFirst(' ', 'T')) ?? DateTime.now();
+      final p = LatLng(lat, lng);
+      // How old the fix is by the SERVER's clock (age_sec) - a phone set to another time zone or a
+      // tracker with a wrong clock no longer makes a live tracker look stale.
+      final age = _numOf(loc['age_sec']);
+      final at = age != null
+          ? DateTime.now().subtract(Duration(seconds: age.abs().round()))
+          : (DateTime.tryParse('${loc['updated_at'] ?? ''}'.replaceFirst(' ', 'T')) ?? DateTime.now());
+      _trackerSpeed = _numOf(loc['speed']) ?? 0;
+      _trackerCourse = _numOf(loc['course']);
+      final isNew = _busPos == null || RoutePlanner.meters(_busPos!, p) >= 1;
       _busPos = p;
       _busAt = at;
-      _onAnyFix();
-    } catch (_) {/* next poll */}
+      if (isNew) {
+        _onAnyFix();
+      } else {
+        setState(() {}); // same place: only the label (live / no signal) may change
+      }
+    } catch (_) {
+      /* next poll */
+    } finally {
+      if (_tracking && mounted && store.busDeviceId > 0) {
+        _trackerPoll = Timer(Duration(seconds: next), _pollTracker);
+      }
+    }
   }
 
   void _stopTracking() {
+    _tracking = false;
     if (_phoneOn) PhoneLocation.instance.position.removeListener(_onPhone);
     _phoneOn = false;
     _trackerPoll?.cancel();
@@ -307,22 +358,50 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     _clock = null;
   }
 
-  bool get _trackerFresh => _busAt != null && DateTime.now().difference(_busAt!).inSeconds.abs() <= _trackerFreshSec;
+  int get _trackerAge => _busAt == null ? 1 << 30 : DateTime.now().difference(_busAt!).inSeconds.abs();
+
+  /// The tracker's position can be used for the bus: a fix from the last minute - or the server says
+  /// the tracker is reporting and the bus is standing (parked or idling). A standing tracker sends
+  /// only every few minutes, but the bus has not moved, so its position is right.
+  bool get _trackerFresh =>
+      _busPos != null &&
+      (_trackerAge <= _trackerFreshSec ||
+          (_trackerOnline && (_trackerState == 'parked' || _trackerState == 'idle') && _trackerAge <= 900));
+
   bool get _phoneFresh => _phoneAt != null && DateTime.now().difference(_phoneAt!).inSeconds <= _phoneFreshSec;
 
-  /// The bus position to use: the tracker while it is reporting, otherwise the monitor's phone.
+  /// The phone may stand in for the bus: the school switched the Monitor Phone Backup on - or the bus has
+  /// no tracker at all.
+  bool get _phoneAllowed => _phoneBackup || store.busDeviceId <= 0;
+
+  /// The bus position to use: the tracker while it is reporting; the phone only when the backup is
+  /// allowed; else the tracker's last position (shown as "no signal"). The phone is used with the backup
+  /// off only when the tracker has never given a position at all - otherwise the page would be empty.
   LatLng? get _best {
     if (_trackerFresh) return _busPos;
-    if (_phoneFresh) return _phonePos;
+    if (_phoneAllowed && _phoneFresh) return _phonePos;
     return _busPos ?? _phonePos;
   }
 
+  bool get _usingPhone => !_trackerFresh && _phonePos != null && _best == _phonePos && _busPos != _phonePos;
+
   String get _sourceLabel {
-    if (_trackerFresh) return 'Bus tracker · live';
-    if (_phoneFresh) return 'Your phone GPS';
-    if (_busPos != null) return 'Tracker seen ${_busAt == null ? '' : DateFormat('h:mm a').format(_busAt!)}';
+    if (_trackerFresh) {
+      if (_trackerAge <= _trackerFreshSec) return 'Bus tracker · live';
+      return _trackerState == 'parked' ? 'Bus tracker · parked' : 'Bus tracker · standing';
+    }
+    if (_usingPhone) return _busPos == null ? 'Your phone GPS · tracker not reporting yet' : 'Your phone GPS · tracker no signal';
+    if (_busPos != null) return 'Tracker no signal · last ${_busAt == null ? '' : DateFormat('h:mm a').format(_busAt!)}';
     return 'Finding the bus…';
   }
+
+  Widget _srcIcon() => Icon(
+        _usingPhone ? Icons.smartphone_rounded : Icons.directions_bus_rounded,
+        size: 15,
+        color: _trackerFresh ? MonitorColors.green : MonitorColors.amber,
+      );
+
+  static const _onRouteM = 45.0; // closer than this to the planned road, the bus is drawn ON it
 
   void _onAnyFix() {
     if (!mounted) return;
@@ -331,11 +410,25 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     final prev = _bestPrev;
     if (prev != null && RoutePlanner.meters(prev, p) < 1) return; // nothing moved
     _bestPrev = p;
-    // Direction of travel. GPS wanders a few metres even when the bus stands still, and the tracker
-    // and the phone disagree by a few metres too - so measure only over a real move (15 m) and
-    // start again, without turning, whenever the position switches between tracker and phone.
     final src = _trackerFresh;
-    if (_headAnchor == null || _headFromTracker != src) {
+
+    // Where on the planned road the bus is.
+    final route = _route;
+    final spot = route?.locate(p, near: _along);
+    final hit = (spot != null && spot.off <= _onRouteM) ? spot : null; // on the road
+
+    // Direction of travel: along the road when on it; else the tracker's own course while driving;
+    // else measured over a real move (15 m - GPS wanders a few metres when standing), starting again
+    // whenever the position switches between tracker and phone.
+    if (hit != null) {
+      _heading = route!.headingAt(hit.along);
+      _headAnchor = p;
+      _headFromTracker = src;
+    } else if (src && _trackerSpeed >= 5 && _trackerCourse != null) {
+      _heading = _trackerCourse!;
+      _headAnchor = p;
+      _headFromTracker = src;
+    } else if (_headAnchor == null || _headFromTracker != src) {
       _headAnchor = p;
       _headFromTracker = src;
     } else if (RoutePlanner.meters(_headAnchor!, p) > 15) {
@@ -343,35 +436,69 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
       _headAnchor = p;
     }
 
-    // Glide over about the time since the last new position (tracker ~5 s, phone ~1 s).
-    final gap = DateTime.now().difference(_lastTarget).inMilliseconds.clamp(600, 5000);
+    // Glide over the time since the last new position: the tracker sends about every 10 s while
+    // driving, so the bus keeps moving between its fixes instead of jumping and waiting (phone ~1 s).
+    final gap = DateTime.now().difference(_lastTarget).inMilliseconds.clamp(800, 11000);
     _lastTarget = DateTime.now();
     final cur = _shown.value;
-    _glideFrom = cur?.pos ?? p;
-    _glideTo = p;
+    final fromAlong = _shownAlong;
+    if (hit != null && fromAlong != null && hit.along >= fromAlong - 30 && hit.along - fromAlong < 1500) {
+      _glideAlongFrom = fromAlong; // along the road, round its bends
+      _glideAlongTo = hit.along;
+    } else {
+      _glideAlongFrom = _glideAlongTo = null; // straight (just joined the road, or off it)
+    }
+    _targetAlong = hit?.along;
+    _glideFrom = cur?.pos ?? hit?.point ?? p;
+    _glideTo = hit?.point ?? p;
     _headFrom = cur?.heading ?? _heading;
     _headTo = _heading;
     _glide.duration = Duration(milliseconds: gap);
     _glide.forward(from: 0);
 
+    // The line still to drive. Off the road: a link from the bus to the road, and - after a few seconds -
+    // a new plan from where the bus really is (see _maybePlan).
+    if (route != null && spot != null) {
+      if (hit != null) {
+        _along = hit.along;
+        _offSince = null;
+        _lineNow = route.from(fromAlong ?? hit.along);
+      } else {
+        _offSince ??= DateTime.now();
+        _lineNow = [p, ...route.from(spot.along)];
+      }
+    }
+    setState(() {});
+
     _checkArrival(p);
     _maybePlan();
-    final plan = _plan;
-    if (plan != null && plan.line.length > 2) {
-      setState(() => _lineNow = RoutePlanner.ahead(plan.line, p));
-    } else if (prev == null) {
-      setState(() {});
-    }
   }
 
   void _onGlide() {
     final a = _glideFrom, b = _glideTo;
     if (a == null || b == null) return;
-    final t = Curves.easeInOut.transform(_glide.value);
-    final pos = LatLng(a.latitude + (b.latitude - a.latitude) * t, a.longitude + (b.longitude - a.longitude) * t);
-    var dh = (_headTo - _headFrom) % 360;
-    if (dh > 180) dh -= 360;
-    final head = (_headFrom + dh * t) % 360;
+    final t = _glide.value; // even speed: the bus does not stop and start between fixes
+    final route = _route;
+    final af = _glideAlongFrom, at = _glideAlongTo;
+    LatLng pos;
+    double head;
+    if (route != null && af != null && at != null) {
+      final d = af + (at - af) * t;
+      pos = route.at(d);
+      head = at - af > 3 ? route.headingAt(d) : _headTo;
+      _shownAlong = d;
+      // Trim the driven part behind the bus about once a second, like navigation apps.
+      if (DateTime.now().difference(_lastTrim).inMilliseconds > 1000) {
+        _lastTrim = DateTime.now();
+        setState(() => _lineNow = route.from(d));
+      }
+    } else {
+      pos = LatLng(a.latitude + (b.latitude - a.latitude) * t, a.longitude + (b.longitude - a.longitude) * t);
+      var dh = (_headTo - _headFrom) % 360;
+      if (dh > 180) dh -= 360;
+      head = (_headFrom + dh * t) % 360;
+      _shownAlong = t >= 1 ? _targetAlong : null;
+    }
     _shown.value = _Fix(pos, head);
     _shownPos.value = pos;
     if (_follow && _mapReady && !_listMode) _camFollow(pos);
@@ -441,10 +568,23 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     return located.first;
   }
 
-  /// The stop to deal with now: the one she is at or chose, else the nearest.
+  /// The stop to deal with now: the one she is at or chose; else (evening) boarding at school; else the
+  /// first stop of the plan - the shortest drive from the bus - still to do; else the nearest.
+  /// The moment a child there is picked up or dropped, that stop is no longer "to do" and this moves on.
   _Stop? _next(List<_Stop> stops, ShiftWindow w) {
     final todo = {for (final s in stops) if (s.state == _St.todo) s.key: s};
     if (_activeKey != null && todo.containsKey(_activeKey)) return todo[_activeKey];
+    if (!w.isMorning) {
+      final school = todo.values.where((s) => s.school).firstOrNull;
+      if (school != null) return school;
+    }
+    for (final k in _planKeys) {
+      final s = todo[k];
+      if (s == null || _skipped.contains(k)) continue;
+      // Morning: the school only once no home is left.
+      if (s.school && w.isMorning && todo.values.any((o) => !o.school && !_skipped.contains(o.key))) continue;
+      return s;
+    }
     return _nearest(stops, w) ?? (todo.isEmpty ? null : todo.values.first);
   }
 
@@ -488,9 +628,16 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
 
   // ---------------------------------------------------------------------------------------- planning
 
+  /// Works out (again) the order of the stops still to do and the road line through them.
+  ///
+  /// When: the stops change (a child picked up or dropped, a stop chosen or skipped) - AT ONCE, first
+  /// with an instant on-phone estimate so the next stop and the order move on the moment she marks,
+  /// then with the road plan a second or two later; when the bus has left the planned road for 8 s
+  /// (a different road taken); after a big jump; and every 3 minutes while driving. Never more than
+  /// every 15 s for the last three, to stay gentle with the free routing service.
   Future<void> _maybePlan() async {
     final w = _shift;
-    if (w == null || _planning) return;
+    if (w == null) return;
     // Only from where the bus really is. Starting from the school while the first position was
     // still on its way (just after opening the app) drew school -> next stop -> school: two roads
     // between the next stop and the school, and no line from the bus at all.
@@ -498,67 +645,116 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     if (start == null) return;
     final stops = _stops(w);
     final todo = stops.where((s) => s.state == _St.todo && s.point != null).toList();
-    final first = _next(stops, w);
-    final sig = '${w.key}|${todo.map((s) => s.key).join(',')}|${first?.key}';
+    final sig = '${w.key}|${todo.map((s) => s.key).join(',')}|$_activeKey|${_skipped.join(',')}';
     final moved = _planFrom == null ? 1e9 : RoutePlanner.meters(_planFrom!, start);
     final age = DateTime.now().difference(_planAt);
-    // Re-plan when the stops or the next stop change, or every minute while the bus is moving -
-    // but never more than every 15 seconds, to stay gentle with the free routing service.
     final changed = sig != _planSig;
-    // A big jump (the tracker coming back after the phone, or the first real fix) re-plans at once.
-    final drifting = (age > const Duration(seconds: 60) && moved > 300) || moved > 800;
-    if (!changed && !drifting) return;
-    if (_planSig.isNotEmpty && age < Duration(seconds: changed ? 3 : 15)) return;
+    final offRoad = _offSince != null && DateTime.now().difference(_offSince!) > const Duration(seconds: 8);
+    final drifting = moved > 800 || (age > const Duration(minutes: 3) && moved > 300);
+    if (!changed && !offRoad && !drifting) return;
+    if (_planning && !changed) { // a change of stops does not wait: it starts over, and the older answer is dropped
+      _planAgain = true;
+      return;
+    }
+    if (!changed && age < const Duration(seconds: 15)) return;
 
+    // First: the stop she is at or chose; in the evening, boarding at school. Last: the school in the
+    // morning. In between: the shortest one-way drive (near first), skipped stops after the others.
+    final active = _activeKey == null ? null : todo.where((s) => s.key == _activeKey).firstOrNull;
+    final schoolStop = todo.where((s) => s.school).firstOrNull;
+    final lead = <_Stop>[
+      if (!w.isMorning && schoolStop != null) schoolStop,
+      if (active != null && active != schoolStop) active,
+    ];
+    final end = (w.isMorning && schoolStop != null && !lead.contains(schoolStop)) ? schoolStop : null;
+    final rest = todo.where((s) => !lead.contains(s) && s != end && !_skipped.contains(s.key)).toList();
+    final skipped = todo.where((s) => !lead.contains(s) && s != end && _skipped.contains(s.key)).toList();
+    final from = lead.isNotEmpty ? lead.last.point! : start;
+    final gen = ++_planGen;
     _planning = true;
     try {
-      // The nearest stop first, then the shortest drive through the rest; the morning ends at school.
-      final lead = <_Stop>[if (first != null && first.point != null) first];
-      final schoolStop = todo.where((s) => s.school).firstOrNull;
-      final end = (w.isMorning && schoolStop != null && first != schoolStop) ? schoolStop : null;
-      final rest = todo.where((s) => !lead.contains(s) && s != end).toList();
-      final from = lead.isNotEmpty ? lead.last.point! : start;
+      List<String> keysOf(RoutePlan p) =>
+          [...lead.map((s) => s.key), for (final i in p.order) rest[i].key, ...skipped.map((s) => s.key), if (end != null) end.key];
 
+      // 1. Instant: straight lines, no network - the next stop and the order change right now.
+      if (changed) {
+        final quick = await RoutePlanner.plan(from, [for (final s in rest) s.point!], end: end?.point, road: false);
+        if (!mounted || gen != _planGen) return;
+        final keys = keysOf(quick);
+        final byKey = {for (final s in todo) s.key: s};
+        _apply(quick, [start, for (final k in keys) byKey[k]!.point!], false, keys, rest, end, sig, start);
+      }
+
+      // 2. The road plan: real driving times for the order, and the line along the roads - from the bus
+      //    to the next stop, and on through the rest.
       final plan = await RoutePlanner.plan(from, [for (final s in rest) s.point!], end: end?.point);
-      if (!mounted) return;
-      final keys = [...lead.map((s) => s.key), for (final i in plan.order) rest[i].key, if (end != null) end.key];
+      if (!mounted || gen != _planGen) return;
+      final keys = keysOf(plan);
       final byKey = {for (final s in todo) s.key: s};
       final ordered = [for (final k in keys) byKey[k]!.point!];
-
-      // The whole way along the roads - from the bus to the next stop, and on through the rest. The
-      // order above only says WHICH stop comes next; drawing just the stops after the next one by
-      // road left the most important leg, bus -> next stop, as a straight line across the map.
       final full = await RoutePlanner.roadPath([start, ...ordered]);
-      if (!mounted) return;
-      _legSec.clear();
-      List<LatLng> line;
-      bool road;
+      if (!mounted || gen != _planGen) return;
       if (full != null) {
+        _legSec.clear();
         for (var i = 0; i < keys.length && i < full.legSeconds.length; i++) {
           _legSec[keys[i]] = full.legSeconds[i];
         }
-        line = full.line;
-        road = true;
+        _apply(plan, full.line, true, keys, rest, end, sig, start, legsDone: true);
       } else {
-        for (var i = 0; i < plan.order.length && i < plan.legSeconds.length; i++) {
-          _legSec[rest[plan.order[i]].key] = plan.legSeconds[i];
-        }
-        if (end != null && plan.legSeconds.length > plan.order.length) _legSec[end.key] = plan.legSeconds[plan.order.length];
-        line = [start, for (final s in lead) s.point!, ...plan.line];
-        road = false;
+        _apply(plan, [start, ...ordered], false, keys, rest, end, sig, start);
       }
-      _leadStraight = ordered.isEmpty ? 0 : RoutePlanner.meters(start, ordered.first);
-      setState(() {
-        _plan = RoutePlan(plan.order, line, plan.legMeters, plan.legSeconds, road);
-        _lineNow = RoutePlanner.ahead(line, start);
-        _planKeys = keys;
-        _planSig = sig;
-        _planAt = DateTime.now();
-        _planFrom = start;
-      });
     } finally {
-      _planning = false;
+      if (gen == _planGen) _planning = false;
+      if (_planAgain && mounted) {
+        _planAgain = false;
+        Future.microtask(_maybePlan);
+      }
     }
+  }
+
+  /// Puts a plan on screen: the order, the times, the line - and the bus onto the new line.
+  void _apply(RoutePlan plan, List<LatLng> line, bool road, List<String> keys, List<_Stop> rest, _Stop? end,
+      String sig, LatLng start, {bool legsDone = false}) {
+    if (!legsDone) {
+      _legSec.clear();
+      for (var i = 0; i < plan.order.length && i < plan.legSeconds.length; i++) {
+        _legSec[rest[plan.order[i]].key] = plan.legSeconds[i];
+      }
+      if (end != null && plan.legSeconds.length > plan.order.length) _legSec[end.key] = plan.legSeconds[plan.order.length];
+    }
+    final route = RouteLine(line);
+    // A glide along the OLD line cannot go on along the new one: finish it in a straight line.
+    final shownNow = _shown.value?.pos;
+    if (_glideAlongFrom != null && shownNow != null && _glide.isAnimating) {
+      final left = (_glide.duration ?? const Duration(seconds: 1)) * (1 - _glide.value);
+      _glideAlongFrom = _glideAlongTo = null;
+      _glideFrom = shownNow;
+      _glide.duration = left < const Duration(milliseconds: 300) ? const Duration(milliseconds: 300) : left;
+      _glide.forward(from: 0);
+    }
+    final here = route.locate(shownNow ?? start);
+    final at = route.locate(start);
+    setState(() {
+      _plan = RoutePlan(plan.order, line, plan.legMeters, plan.legSeconds, road);
+      _route = route;
+      _shownAlong = (here != null && here.off <= _onRouteM) ? here.along : null;
+      _targetAlong = (at != null && at.off <= _onRouteM) ? at.along : null;
+      _along = at?.along;
+      _offSince = null;
+      _lineNow = route.from(_shownAlong ?? at?.along ?? 0);
+      _planKeys = keys;
+      _planSig = sig;
+      _planAt = DateTime.now();
+      _planFrom = start;
+      final p0 = _firstStopPoint(keys);
+      _leadStraight = p0 == null ? 0 : RoutePlanner.meters(start, p0);
+    });
+  }
+
+  LatLng? _firstStopPoint(List<String> keys) {
+    final w = _shift;
+    if (w == null || keys.isEmpty) return null;
+    return _stops(w).where((s) => s.key == keys.first).firstOrNull?.point;
   }
 
   /// Town driving speed, from the road plan when there is one.
@@ -812,8 +1008,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
         child: Align(
           alignment: Alignment.centerLeft,
           child: _glass(Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(_trackerFresh ? Icons.directions_bus_rounded : Icons.smartphone_rounded, size: 15,
-                color: _trackerFresh ? MonitorColors.green : MonitorColors.amber),
+            _srcIcon(),
             const SizedBox(width: 6),
             Flexible(child: Text(_sourceLabel, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700))),
             if (_plan != null && !_plan!.road) ...[
@@ -1481,8 +1676,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
         ]),
         const Divider(height: 18, color: MonitorColors.line),
         Row(children: [
-          Icon(_trackerFresh ? Icons.directions_bus_rounded : Icons.smartphone_rounded, size: 15,
-              color: _trackerFresh ? MonitorColors.green : MonitorColors.amber),
+          _srcIcon(),
           const SizedBox(width: 6),
           Expanded(child: Text(_sourceLabel, style: const TextStyle(fontSize: 12, color: MonitorColors.muted, fontWeight: FontWeight.w600))),
         ]),

@@ -22,14 +22,20 @@ class RoutePlan {
   const RoutePlan(this.order, this.line, this.legMeters, this.legSeconds, this.road);
 }
 
-/// Plans the shortest drive through the remaining stops.
+/// Plans the drive through the remaining stops.
 ///
-/// First choice: the public OSRM routing service (the same one the parents' tracking map uses) - the
-/// real shortest DRIVING order and a line that follows the roads. It is a free demonstration
-/// service, so it is used gently: the route page asks for a plan only when something has changed (a
-/// stop done, a different stop reached) or at most once a minute while driving, and gives up after
-/// a few seconds. Whenever it does not answer, the plan is worked out on the phone instead from
-/// straight-line distances, so the page never stops working.
+/// The ORDER: the shortest ONE-WAY drive that starts where the bus is now - so the nearby stops come
+/// first and the far ones last. The bus never has to come back to where it started, so the order is
+/// not judged by a return leg. (It used to ask the routing service for a ROUND trip and drop the way
+/// back; a round trip is just as short driven either way round, so it often went out to the farthest
+/// stop first and came back through the near ones.)
+///
+/// The cost of each leg is the real DRIVING time between the two points, from the public OSRM
+/// routing service (one "table" request for all of them), so a stop across a highway is not taken
+/// for "near". The order itself is worked out on the phone (nearest first, then 2-opt and moving
+/// single stops until nothing improves - exact enough for school-bus sized routes, and instant).
+/// Without network the same is done with straight-line distances, so the page never stops working.
+/// The school is not part of the order: it is first in the evening and last in the morning anyway.
 class RoutePlanner {
   static const _base = 'https://router.project-osrm.org';
   static const _timeout = Duration(seconds: 6);
@@ -38,70 +44,121 @@ class RoutePlanner {
   static const _dist = Distance();
   static double meters(LatLng a, LatLng b) => _dist.as(LengthUnit.Meter, a, b);
 
-  /// [start] is where the bus is now; [stops] the stops still to visit; [end], when given, must be
-  /// last (the school, in the morning).
-  static Future<RoutePlan> plan(LatLng start, List<LatLng> stops, {LatLng? end}) async {
+  /// [start] is where the bus is now; [stops] the stops still to visit. [end] (the school in the
+  /// morning) only adds its leg to the times - it does not change the order.
+  /// [road] false: straight lines only, no network - an instant first answer (the road plan follows).
+  static Future<RoutePlan> plan(LatLng start, List<LatLng> stops, {LatLng? end, bool road = true}) async {
     if (stops.isEmpty && end == null) return const RoutePlan([], [], [], [], false);
-    if (stops.length <= _maxRoadStops) {
+    final pts = [start, ...stops, if (end != null) end];
+    _Matrix? m;
+    if (road && stops.length > 1 && pts.length <= _maxRoadStops + 2) {
       try {
-        final p = await _road(start, stops, end);
-        if (p != null) return p;
+        m = await _table(pts);
       } catch (_) {
-        // Offline, slow, or the service said no: fall through to the on-phone plan.
+        // Offline, slow, or the service said no: straight lines below.
       }
     }
-    return local(start, stops, end: end);
+    final roadTimes = m != null;
+    m ??= _straight(pts);
+    final order = _solve(m.sec, stops.length);
+    final seq = [0, for (final i in order) i + 1, if (end != null) pts.length - 1];
+    final legM = <double>[for (var i = 1; i < seq.length; i++) m.m[seq[i - 1]][seq[i]]];
+    final legS = <double>[for (var i = 1; i < seq.length; i++) m.sec[seq[i - 1]][seq[i]]];
+    return RoutePlan(order, [for (final i in seq) pts[i]], legM, legS, roadTimes);
   }
 
-  /// OSRM "trip": the optimised order. With a fixed end it is an open trip start -> ... -> end; without
-  /// one OSRM only optimises round trips, so the return leg to the start is simply dropped.
-  static Future<RoutePlan?> _road(LatLng start, List<LatLng> stops, LatLng? end) async {
-    final pts = [start, ...stops, if (end != null) end];
+  /// Driving seconds and metres between every pair of points (OSRM "table"). A pair the service
+  /// cannot route falls back to the straight-line estimate.
+  static Future<_Matrix?> _table(List<LatLng> pts) async {
     final coords = pts.map((p) => '${p.longitude.toStringAsFixed(6)},${p.latitude.toStringAsFixed(6)}').join(';');
-    final q = end != null ? 'roundtrip=false&source=first&destination=last' : 'roundtrip=true&source=first';
-    final uri = Uri.parse('$_base/trip/v1/driving/$coords?$q&overview=full&geometries=geojson');
+    final uri = Uri.parse('$_base/table/v1/driving/$coords?annotations=duration,distance');
     final r = await http.get(uri, headers: {'User-Agent': 'SmartStepSchoolBus/1.1 (school transport app)'}).timeout(_timeout);
     if (r.statusCode != 200) return null;
     final data = jsonDecode(r.body);
     if (data is! Map || data['code'] != 'Ok') return null;
-    final trips = data['trips'] as List?;
-    final wps = data['waypoints'] as List?;
-    if (trips == null || trips.isEmpty || wps == null || wps.length != pts.length) return null;
+    final dur = data['durations'] as List?;
+    final dis = data['distances'] as List?;
+    if (dur == null || dur.length != pts.length) return null;
+    final est = _straight(pts);
+    final sec = List.generate(pts.length, (i) => List<double>.filled(pts.length, 0));
+    final mm = List.generate(pts.length, (i) => List<double>.filled(pts.length, 0));
+    for (var i = 0; i < pts.length; i++) {
+      for (var j = 0; j < pts.length; j++) {
+        final s = (dur[i] as List?)?[j];
+        final d = dis == null ? null : (dis[i] as List?)?[j];
+        sec[i][j] = s is num ? s.toDouble() : est.sec[i][j];
+        mm[i][j] = d is num ? d.toDouble() : est.m[i][j];
+      }
+    }
+    return _Matrix(sec, mm);
+  }
 
-    // waypoints are in INPUT order; waypoint_index is each one's position in the trip.
-    final pos = List<int>.generate(pts.length, (i) => (wps[i]['waypoint_index'] as num).toInt());
-    final byTrip = List<int>.generate(pts.length, (i) => i)..sort((a, b) => pos[a].compareTo(pos[b]));
-    // byTrip[0] is the start (input 0); stops are inputs 1..stops.length; the end, if any, is last.
-    final order = <int>[
-      for (final i in byTrip)
-        if (i >= 1 && i <= stops.length) i - 1,
-    ];
+  /// Straight lines with a road-ish allowance: real driving is ~30% longer, at ~28 km/h in town.
+  static _Matrix _straight(List<LatLng> pts) {
+    final mm = List.generate(pts.length, (i) => List.generate(pts.length, (j) => meters(pts[i], pts[j]) * 1.3));
+    final sec = [for (final row in mm) [for (final v in row) v / (28 / 3.6)]];
+    return _Matrix(sec, mm);
+  }
 
-    final trip = trips[0];
-    final legs = (trip['legs'] as List?) ?? const [];
-    final legM = <double>[for (final l in legs) ((l['distance'] as num?) ?? 0).toDouble()];
-    final legS = <double>[for (final l in legs) ((l['duration'] as num?) ?? 0).toDouble()];
-    var line = <LatLng>[
-      for (final c in (trip['geometry']?['coordinates'] as List? ?? const []))
-        LatLng((c[1] as num).toDouble(), (c[0] as num).toDouble()),
-    ];
-    if (end == null && legM.length > order.length) {
-      // Round trip: cut the line where the last stop is reached, and drop the leg home.
-      final last = stops[order.last];
-      var cut = line.length - 1;
-      var best = double.infinity;
-      for (var i = line.length ~/ 3; i < line.length; i++) {
-        final d = meters(line[i], last);
-        if (d < best) {
-          best = d;
-          cut = i;
+  /// The shortest open path 0 -> every stop (1..n), in any order, ending anywhere.
+  static List<int> _solve(List<List<double>> c, int n) {
+    if (n == 0) return [];
+    double cost(List<int> o) {
+      var t = 0.0, p = 0;
+      for (final i in o) {
+        t += c[p][i + 1];
+        p = i + 1;
+      }
+      return t;
+    }
+
+    // Nearest first.
+    final left = List<int>.generate(n, (i) => i);
+    final order = <int>[];
+    var at = 0;
+    while (left.isNotEmpty) {
+      left.sort((a, b) => c[at][a + 1].compareTo(c[at][b + 1]));
+      final next = left.removeAt(0);
+      order.add(next);
+      at = next + 1;
+    }
+    // Improve: reverse a stretch (2-opt), or move one stop elsewhere (or-opt), while it shortens the drive.
+    var best = cost(order);
+    var improved = true;
+    var guard = 0;
+    while (improved && guard++ < 60) {
+      improved = false;
+      for (var i = 0; i < n - 1; i++) {
+        for (var k = i + 1; k < n; k++) {
+          final cand = [...order.sublist(0, i), ...order.sublist(i, k + 1).reversed, ...order.sublist(k + 1)];
+          final cc = cost(cand);
+          if (cc + 0.5 < best) {
+            order
+              ..clear()
+              ..addAll(cand);
+            best = cc;
+            improved = true;
+          }
         }
       }
-      line = line.sublist(0, cut + 1);
-      legM.removeLast();
-      legS.removeLast();
+      for (var i = 0; i < n; i++) {
+        for (var j = 0; j < n; j++) {
+          if (i == j) continue;
+          final cand = [...order];
+          final v = cand.removeAt(i);
+          cand.insert(j, v);
+          final cc = cost(cand);
+          if (cc + 0.5 < best) {
+            order
+              ..clear()
+              ..addAll(cand);
+            best = cc;
+            improved = true;
+          }
+        }
+      }
     }
-    return RoutePlan(order, line, legM, legS, true);
+    return order;
   }
 
   /// The road route through [pts] in exactly this order (OSRM "route"): the line along the roads and
@@ -136,78 +193,6 @@ class RoutePlanner {
     }
   }
 
-  /// The part of [line] still ahead of [at]: everything before the point of the line nearest to the
-  /// bus is cut off, and the line starts at the bus. Only the first stretch is searched, so a route
-  /// that later passes the same place again is not cut short.
-  static List<LatLng> ahead(List<LatLng> line, LatLng at) {
-    if (line.length < 3) return line;
-    final searchTo = math.min(line.length - 1, math.max(40, line.length ~/ 3));
-    var best = 0;
-    var bestD = double.infinity;
-    for (var i = 0; i < searchTo; i++) {
-      final d = meters(line[i], at);
-      if (d < bestD) {
-        bestD = d;
-        best = i;
-      }
-    }
-    if (bestD > 250) return line; // the bus is off the planned line - keep it until the next re-plan
-    return [at, ...line.sublist(best + 1)];
-  }
-
-  /// On-phone plan: nearest stop next, then 2-opt to untangle crossings. Good to a few percent on
-  /// school-bus sized routes, instant, and works with no signal.
-  static RoutePlan local(LatLng start, List<LatLng> stops, {LatLng? end}) {
-    final n = stops.length;
-    final left = List<int>.generate(n, (i) => i);
-    final order = <int>[];
-    var at = start;
-    while (left.isNotEmpty) {
-      left.sort((a, b) => meters(at, stops[a]).compareTo(meters(at, stops[b])));
-      final next = left.removeAt(0);
-      order.add(next);
-      at = stops[next];
-    }
-
-    double pathLen(List<int> o) {
-      var d = 0.0;
-      var p = start;
-      for (final i in o) {
-        d += meters(p, stops[i]);
-        p = stops[i];
-      }
-      if (end != null) d += meters(p, end);
-      return d;
-    }
-
-    // 2-opt: reverse any stretch whose reversal shortens the whole path.
-    var improved = true;
-    var guard = 0;
-    while (improved && guard++ < 50) {
-      improved = false;
-      for (var i = 0; i < n - 1; i++) {
-        for (var k = i + 1; k < n; k++) {
-          final cand = [...order.sublist(0, i), ...order.sublist(i, k + 1).reversed, ...order.sublist(k + 1)];
-          if (pathLen(cand) + 1 < pathLen(order)) {
-            order
-              ..clear()
-              ..addAll(cand);
-            improved = true;
-          }
-        }
-      }
-    }
-
-    // Straight lines, with a road-ish allowance: real driving is ~30% longer, at ~28 km/h in town.
-    final line = <LatLng>[start, for (final i in order) stops[i], if (end != null) end];
-    final legM = <double>[];
-    for (var i = 1; i < line.length; i++) {
-      legM.add(meters(line[i - 1], line[i]) * 1.3);
-    }
-    final legS = [for (final m in legM) m / (28 / 3.6)];
-    return RoutePlan(order, line, legM, legS, false);
-  }
-
   /// Compass bearing from a to b, degrees clockwise from north.
   static double bearing(LatLng a, LatLng b) {
     final la1 = a.latitude * math.pi / 180, la2 = b.latitude * math.pi / 180;
@@ -215,5 +200,117 @@ class RoutePlanner {
     final y = math.sin(dLo) * math.cos(la2);
     final x = math.cos(la1) * math.sin(la2) - math.sin(la1) * math.cos(la2) * math.cos(dLo);
     return (math.atan2(y, x) * 180 / math.pi + 360) % 360;
+  }
+}
+
+class _Matrix {
+  final List<List<double>> sec; // driving seconds [from][to]
+  final List<List<double>> m; // driving metres [from][to]
+  const _Matrix(this.sec, this.m);
+}
+
+/// Where along the route a point is: metres from the start of the line, and how far it is off it.
+class RouteSpot {
+  final double along;
+  final double off;
+  final LatLng point; // the nearest point ON the line
+  const RouteSpot(this.along, this.off, this.point);
+}
+
+/// The planned road line, measured, so the bus can be put ON it and followed along it - the way
+/// navigation apps show a vehicle: the bus moves along the road, the part already driven disappears,
+/// and leaving the road is noticed (to plan again from where the bus really is).
+class RouteLine {
+  final List<LatLng> pts;
+  late final List<double> _cum; // metres from the start to each point
+
+  RouteLine(this.pts) {
+    _cum = List<double>.filled(pts.length, 0);
+    for (var i = 1; i < pts.length; i++) {
+      _cum[i] = _cum[i - 1] + RoutePlanner.meters(pts[i - 1], pts[i]);
+    }
+  }
+
+  double get length => pts.isEmpty ? 0 : _cum.last;
+
+  /// The nearest point of the line to [p]. Searched first just ahead of [near] (where the bus was a
+  /// moment ago - a route that passes the same road twice is not confused), then everywhere if that
+  /// finds nothing close.
+  RouteSpot? locate(LatLng p, {double? near}) {
+    if (pts.length < 2) return null;
+    RouteSpot? best;
+    void scan(double from, double to) {
+      for (var i = 0; i < pts.length - 1; i++) {
+        if (_cum[i + 1] < from || _cum[i] > to) continue;
+        final s = _onSegment(i, p);
+        if (best == null || s.off < best!.off) best = s;
+      }
+    }
+
+    if (near != null) {
+      scan(near - 60, near + 3000);
+      if (best != null && best!.off <= 60) return best;
+    }
+    final local = best;
+    best = null;
+    scan(-1, double.infinity);
+    if (local != null && best != null && local.off <= best!.off + 15) return local;
+    return best;
+  }
+
+  RouteSpot _onSegment(int i, LatLng p) {
+    final a = pts[i], b = pts[i + 1];
+    // Flat metres around p - exact enough over one road segment.
+    final kx = 111320.0 * math.cos(p.latitude * math.pi / 180), ky = 110540.0;
+    final ax = (a.longitude - p.longitude) * kx, ay = (a.latitude - p.latitude) * ky;
+    final bx = (b.longitude - p.longitude) * kx, by = (b.latitude - p.latitude) * ky;
+    final dx = bx - ax, dy = by - ay;
+    final len2 = dx * dx + dy * dy;
+    var t = len2 <= 0 ? 0.0 : -(ax * dx + ay * dy) / len2;
+    t = t.clamp(0.0, 1.0);
+    final px = ax + dx * t, py = ay + dy * t;
+    final segLen = _cum[i + 1] - _cum[i];
+    return RouteSpot(_cum[i] + segLen * t, math.sqrt(px * px + py * py),
+        LatLng(a.latitude + (b.latitude - a.latitude) * t, a.longitude + (b.longitude - a.longitude) * t));
+  }
+
+  int _segAt(double along) {
+    var lo = 0, hi = pts.length - 1;
+    while (hi - lo > 1) {
+      final mid = (lo + hi) >> 1;
+      if (_cum[mid] <= along) {
+        lo = mid;
+      } else {
+        hi = mid;
+      }
+    }
+    return lo;
+  }
+
+  /// The point [along] metres from the start of the line.
+  LatLng at(double along) {
+    if (pts.length < 2) return pts.first;
+    final d = along.clamp(0.0, length);
+    final i = _segAt(d);
+    final segLen = _cum[i + 1] - _cum[i];
+    final t = segLen <= 0 ? 0.0 : (d - _cum[i]) / segLen;
+    final a = pts[i], b = pts[i + 1];
+    return LatLng(a.latitude + (b.latitude - a.latitude) * t, a.longitude + (b.longitude - a.longitude) * t);
+  }
+
+  /// The road's direction [along] metres in (looked at over the next ~20 m, so a tiny kink does not
+  /// swing the bus).
+  double headingAt(double along) {
+    final a = at(along), b = at(math.min(length, along + 20));
+    if (RoutePlanner.meters(a, b) < 2) return RoutePlanner.bearing(at(math.max(0.0, along - 20)), a);
+    return RoutePlanner.bearing(a, b);
+  }
+
+  /// The line still to drive, from [along] on.
+  List<LatLng> from(double along) {
+    if (pts.length < 2) return pts;
+    final d = along.clamp(0.0, length);
+    final i = _segAt(d);
+    return [at(d), ...pts.sublist(i + 1)];
   }
 }
