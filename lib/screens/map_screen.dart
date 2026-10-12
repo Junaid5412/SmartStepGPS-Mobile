@@ -10,7 +10,9 @@ import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import '../services/api_service.dart';
 import '../services/map_config.dart';
+import '../widgets/bus_map_common.dart';
 import '../widgets/google_bus_map.dart';
+import '../widgets/libre_bus_map.dart';
 import '../widgets/custom_loading.dart';
 import '../widgets/module_gate.dart';
 
@@ -38,9 +40,11 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
   /// never rebuilds the map tiles.
   static const Widget _baseMap = BaseMapLayer();
 
-  /// The official Google map's camera, while that map is the one on screen (App Module Settings -> Map in the apps).
-  GoogleMapCam? _gcam;
-  bool get _googleOn => MapConfig.instance.value.isGoogleSdk;
+  /// The camera of the native map (official Google map or OpenFreeMap), while one of them is on screen
+  /// (App Module Settings -> Map in the apps).
+  BusMapCam? _gcam;
+  bool get _googleOn => MapConfig.instance.value.isNative;
+  String _mapKind = '';   // google | libre | tiles - a different kind of map means a fresh camera
 
   // Camera moves, whichever map is on screen.
   void _camMove(LatLng p, double zoom) {
@@ -162,11 +166,18 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
   /// The portal switched the map: the zoom limit and the credit line follow it.
   void _onMapSource() {
     if (!mounted) return;
-    if (!_googleOn) _gcam = null;
-    _rotation.value = 0;
+    final s = MapConfig.instance.value;
+    final kind = s.isGoogleSdk ? 'google' : s.isLibre ? 'libre' : 'tiles';
+    final changedKind = _mapKind.isNotEmpty && kind != _mapKind;
+    _mapKind = kind;
     setState(() {});
-    // The other map starts from scratch: show the bus, stop and school again once it is there.
-    if (_initialFitted) Future.delayed(const Duration(milliseconds: 600), () { if (mounted) _fitNow(); });
+    // Only a different KIND of map starts from scratch (and is shown the bus, stop and school again); a new look
+    // of the same kind keeps its camera - re-fitting on every change made the map jump.
+    if (changedKind) {
+      _gcam = null;
+      _rotation.value = 0;
+      if (_initialFitted) Future.delayed(const Duration(milliseconds: 600), () { if (mounted) _fitNow(); });
+    }
   }
 
   /// Ask again after the interval the server asked for (3 s while the bus moves, longer when it is parked or
@@ -810,7 +821,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
   /// parent dragged the map left and right. A tiny zoom nudge, repeated while the first frames settle, makes
   /// it request every visible tile. Skipped once the parent has touched the map.
   void _kickMap() {
-    if (_googleOn) return; // the official Google map loads its own tiles
+    // Only the built-in offline map needs this; every other map loads its own tiles - and the nudges made the
+    // map visibly jitter while the screen opened.
+    if (!MapConfig.instance.value.isOffline) return;
     for (final ms in const [300, 1100, 2600]) {
       Future.delayed(Duration(milliseconds: ms), () {
         if (!mounted || !_cameraFollowBus || _isLoading) return;
@@ -1203,26 +1216,48 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
       if (_parentLocation != null)
         GPin(id: 'me', pos: _parentLocation!, style: const PinStyle(size: 30, color: Color(0xFF0288D1), icon: Icons.person_pin_circle_rounded, label: 'You')),
     ];
+    final src = MapConfig.instance.value;
+    final center = _displayBusLocation ?? _busLocation ?? _homeLocation ?? _schoolLocation ?? const LatLng(25.2854, 51.5310);
+    final lines = [
+      if (_roadPolyline.isNotEmpty) GLine(id: 'route', points: _lineAhead, color: const Color(0xFF2563EB)),
+    ];
+    // Room for the header buttons and the trip card, so the map's logo and a fitted view stay visible.
+    final pad = EdgeInsets.only(top: topInset + 56, bottom: _full ? 72 : 210);
+    void ready(BusMapCam cam) {
+      _gcam = cam;
+      if (_initialFitted) WidgetsBinding.instance.addPostFrameCallback((_) { if (mounted) _fitNow(); });
+    }
+    void gesture() {
+      if (_cameraFollowBus) setState(() => _cameraFollowBus = false);
+    }
+    if (src.isLibre) {
+      return LibreBusMap(
+        key: ValueKey('lmap-${src.signature}'),
+        styleUrl: src.url,
+        initialCenter: center,
+        initialZoom: 15,
+        pins: pins,
+        lines: lines,
+        bus: _busPos,
+        busLook: _busLook,
+        padding: pad,
+        onReady: ready,
+        onUserGesture: gesture,
+        onRotation: (r) => _rotation.value = r,
+      );
+    }
     return GoogleBusMap(
-      key: ValueKey('gmap-${MapConfig.instance.value.signature}'),
-      initialCenter: _displayBusLocation ?? _busLocation ?? _homeLocation ?? _schoolLocation ?? const LatLng(25.2854, 51.5310),
+      key: ValueKey('gmap-${src.signature}'),
+      initialCenter: center,
       initialZoom: 15,
-      hybrid: MapConfig.instance.value.googleHybrid,
+      hybrid: src.googleHybrid,
       pins: pins,
-      lines: [
-        if (_roadPolyline.isNotEmpty) GLine(id: 'route', points: _lineAhead, color: const Color(0xFF2563EB)),
-      ],
+      lines: lines,
       bus: _busPos,
       busLook: _busLook,
-      // Room for the header buttons and the trip card, so Google's logo and a fitted view stay visible.
-      padding: EdgeInsets.only(top: topInset + 56, bottom: _full ? 72 : 210),
-      onReady: (cam) {
-        _gcam = cam;
-        if (_initialFitted) WidgetsBinding.instance.addPostFrameCallback((_) { if (mounted) _fitNow(); });
-      },
-      onUserGesture: () {
-        if (_cameraFollowBus) setState(() => _cameraFollowBus = false);
-      },
+      padding: pad,
+      onReady: ready,
+      onUserGesture: gesture,
       onRotation: (r) => _rotation.value = r,
     );
   }

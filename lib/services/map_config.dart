@@ -35,16 +35,22 @@ class MapSource {
     this.attribution = '',
   });
 
-  /// Until the portal's choice has arrived (first start, no signal): the same default the server uses.
+  /// Until the portal's choice has arrived (first start, no signal): the same default the server uses -
+  /// OpenFreeMap, free with no key and no usage limit.
   static const MapSource fallback = MapSource(
-    type: 'google',
-    url: 'https://mt{s}.google.com/vt/lyrs=m&hl=en&gl=QA&x={x}&y={y}&z={z}',
-    subdomains: ['0', '1', '2', '3'],
-    maxNativeZoom: 20,
-    attribution: 'Map data © Google',
+    type: 'openfreemap',
+    url: 'https://tiles.openfreemap.org/styles/liberty',
+    maxNativeZoom: 19,
+    attribution: 'OpenFreeMap © OpenMapTiles Data from OpenStreetMap',
   );
 
-  bool get isOffline => !isGoogleSdk && (type == 'offline' || url.isEmpty);
+  bool get isOffline => !isGoogleSdk && !isLibre && (type == 'offline' || url.isEmpty);
+
+  /// OpenFreeMap: a vector map style drawn natively by MapLibre ([url] is the style address).
+  bool get isLibre => type.startsWith('openfreemap') && url.startsWith('https://');
+
+  /// Drawn by a native map component (Google or MapLibre) rather than flutter_map.
+  bool get isNative => isGoogleSdk || isLibre;
 
   /// The official Google Maps component (needs the key in this build; otherwise [url] - Google's tiles - is used).
   bool get isGoogleSdk => kGoogleMapsKey && type.startsWith('google_sdk');
@@ -53,7 +59,7 @@ class MapSource {
   bool get googleHybrid => type == 'google_sdk_hybrid';
 
   /// How close the map may zoom: the offline data stops at street level, online maps go further.
-  double get maxZoom => isGoogleSdk ? 20 : isOffline ? 18 : (maxNativeZoom + 1).clamp(16, 20).toDouble();
+  double get maxZoom => isGoogleSdk ? 20 : isLibre ? 19.5 : isOffline ? 18 : (maxNativeZoom + 1).clamp(16, 20).toDouble();
 
   /// The licence credit shown on the map.
   String get credit {
@@ -95,6 +101,10 @@ class MapConfig extends ValueNotifier<MapSource> {
   static const String _prefsKey = 'app_map_source_v1';
   bool _restored = false;
 
+  /// Read the choice saved on this phone. Called once at app start, so the first map already draws the right
+  /// map instead of starting with the default and switching a moment later (that switch made the map jump).
+  Future<void> restore() => _restore();
+
   Future<void> _restore() async {
     if (_restored) return;
     _restored = true;
@@ -126,7 +136,8 @@ class MapConfig extends ValueNotifier<MapSource> {
   void apply(Map<dynamic, dynamic> m) {
     final s = MapSource.fromJson(m);
     // Only a secure (https) tile address with {z} {x} {y} is accepted, whatever the server sends.
-    final okUrl = s.url.startsWith('https://') && s.url.contains('{z}') && s.url.contains('{x}') && s.url.contains('{y}');
+    final okUrl = s.url.startsWith('https://') &&
+        (s.type.startsWith('openfreemap') || (s.url.contains('{z}') && s.url.contains('{x}') && s.url.contains('{y}')));
     if (!okUrl && (s.url.isNotEmpty || s.type != 'offline')) return;
     if (s.signature == value.signature) return;
     value = s;

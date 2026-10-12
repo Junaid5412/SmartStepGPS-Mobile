@@ -6,7 +6,7 @@ publish_to: 'none'
 # The number after + is the BUILD number (CFBundleVersion). Apple refuses any upload whose build
 # number is not higher than one already accepted, and build 1 has been used. Bump this before every
 # upload; the version before + only changes when the release itself changes.
-version: 1.2.3+26
+version: 1.2.4+27
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -23,6 +23,8 @@ dependencies:
   # The official Google map (App Module Settings -> Map in the apps -> "Google Maps - official"). Needs a
   # Google Maps API key in the build: the GOOGLE_MAPS_API_KEY secret in GitHub Actions (see the workflows).
   google_maps_flutter: ^2.13.0
+  # The free map (OpenFreeMap): OpenStreetMap vector styles drawn natively by MapLibre - no key, no usage limit.
+  maplibre_gl: ^0.25.0
   # Offline English map of Qatar (see tool/map/README.md). vector_map_tiles is pinned to the 9.x
   # pre-release because it is the first line that supports flutter_map 8; the stable 8.0.0 needs
   # flutter_map 7. Pinned exactly so a new beta cannot change behaviour under a store build.

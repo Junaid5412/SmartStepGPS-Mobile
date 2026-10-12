@@ -9,7 +9,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../services/api_service.dart';
 import '../../services/map_config.dart';
+import '../../widgets/bus_map_common.dart';
 import '../../widgets/google_bus_map.dart';
+import '../../widgets/libre_bus_map.dart';
 import 'monitor_actions.dart';
 import 'monitor_shift_view.dart';
 import 'monitor_store.dart';
@@ -82,9 +84,10 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
   static const Widget _baseMap = BaseMapLayer(); // follows the portal's map choice by itself
 
   /// The official Google map's camera, while that map is on screen; and the bus position it follows.
-  GoogleMapCam? _gcam;
+  BusMapCam? _gcam;
   final ValueNotifier<LatLng?> _shownPos = ValueNotifier(null);
-  bool get _googleOn => MapConfig.instance.value.isGoogleSdk;
+  bool get _googleOn => MapConfig.instance.value.isNative;   // official Google map or OpenFreeMap
+  String _mapKind = '';
 
   void _camFollow(LatLng p) {
     try {
@@ -195,10 +198,18 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
   /// The portal switched the map: the zoom limit and the credit line follow it.
   void _onMapSource() {
     if (!mounted) return;
-    if (!_googleOn) _gcam = null;
+    final s = MapConfig.instance.value;
+    final kind = s.isGoogleSdk ? 'google' : s.isLibre ? 'libre' : 'tiles';
+    final changedKind = _mapKind.isNotEmpty && kind != _mapKind;
+    _mapKind = kind;
+    if (!changedKind) {
+      setState(() {});
+      return;
+    }
+    _gcam = null;
     _rotation.value = 0;
     setState(() {
-      _mapReady = false;   // the other map starts from scratch
+      _mapReady = false;   // a different kind of map starts from scratch
       _fitted = false;
     });
   }
@@ -1185,30 +1196,52 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
       if (_phoneDot.value != null)
         GPin(id: 'phone', pos: _phoneDot.value!, style: const PinStyle(size: 18, color: Color(0xFF2563EB), border: 3)),
     ];
+    final src = MapConfig.instance.value;
+    final lines = [
+      if (_plan != null && (_lineNow ?? _plan!.line).length > 1)
+        GLine(id: 'plan', points: _lineNow ?? _plan!.line, color: w.color.withValues(alpha: 0.85)),
+    ];
+    BusLook look() => BusLook(
+          body: PinStyle(size: 34, color: Colors.white, border: 0, icon: Icons.navigation_rounded, fg: w.color, halo: w.color.withValues(alpha: 0.18)),
+          heading: _shown.value?.heading ?? 0,
+          rotate: true,
+        );
+    final pad = EdgeInsets.only(top: 50, bottom: MediaQuery.of(context).size.height * 0.22);
+    void ready(BusMapCam cam) {
+      _gcam = cam;
+      setState(() => _mapReady = true);
+    }
+    void gesture() {
+      if (_follow) setState(() => _follow = false);
+    }
+    if (src.isLibre) {
+      return LibreBusMap(
+        key: ValueKey('lmap-${src.signature}'),
+        styleUrl: src.url,
+        initialCenter: center,
+        initialZoom: 16,
+        pins: pins,
+        lines: lines,
+        bus: _shownPos,
+        busLook: look,
+        padding: pad,
+        onReady: ready,
+        onUserGesture: gesture,
+        onRotation: (r) => _rotation.value = r,
+      );
+    }
     return GoogleBusMap(
-      key: ValueKey('gmap-${MapConfig.instance.value.signature}'),
+      key: ValueKey('gmap-${src.signature}'),
       initialCenter: center,
       initialZoom: 16,
-      hybrid: MapConfig.instance.value.googleHybrid,
+      hybrid: src.googleHybrid,
       pins: pins,
-      lines: [
-        if (_plan != null && (_lineNow ?? _plan!.line).length > 1)
-          GLine(id: 'plan', points: _lineNow ?? _plan!.line, color: w.color.withValues(alpha: 0.85)),
-      ],
+      lines: lines,
       bus: _shownPos,
-      busLook: () => BusLook(
-        body: PinStyle(size: 34, color: Colors.white, border: 0, icon: Icons.navigation_rounded, fg: w.color, halo: w.color.withValues(alpha: 0.18)),
-        heading: _shown.value?.heading ?? 0,
-        rotate: true,
-      ),
-      padding: EdgeInsets.only(top: 50, bottom: MediaQuery.of(context).size.height * 0.22),
-      onReady: (cam) {
-        _gcam = cam;
-        setState(() => _mapReady = true);
-      },
-      onUserGesture: () {
-        if (_follow) setState(() => _follow = false);
-      },
+      busLook: look,
+      padding: pad,
+      onReady: ready,
+      onUserGesture: gesture,
       onRotation: (r) => _rotation.value = r,
     );
   }

@@ -2,10 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'screens/splash_screen.dart';
 import 'services/api_service.dart';
+import 'services/map_config.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await ApiService.initBaseUrl();
+  // The map chosen on the portal, as last seen on this phone: the first map drawn is already the right one.
+  await MapConfig.instance.restore();
   // Edge-to-edge (MainActivity turns it on): the app draws behind the status and navigation bars.
   // No bar COLOURS are set here - Android 15 ignores them and Google Play flags the calls - only the
   // icon brightness: light icons over the dark headers, dark ones over the light bottom strip.
