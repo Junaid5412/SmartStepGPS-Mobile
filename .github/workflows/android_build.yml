@@ -17,10 +17,12 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Java
-        uses: actions/setup-java@v4
+        # Java 21: the MapLibre map plugin (free OpenFreeMap) is compiled for Java 21 and fails on 17
+        # ("invalid source release: 21"). The app itself still targets Java 17 bytecode.
+        uses: actions/setup-java@v5
         with:
           distribution: 'zulu'
-          java-version: '17'
+          java-version: '21'
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
