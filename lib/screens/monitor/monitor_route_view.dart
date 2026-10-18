@@ -141,6 +141,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
   String _trackerState = ''; // moving / idle / parked / nosignal / offline
   double _trackerSpeed = 0; // km/h
   double? _trackerCourse;
+  String _trackerNote = ''; // gps_weak | stale | parked ... - why the server shows no speed
   bool _phoneBackup = false; // the school allows the monitor's phone to stand in for the tracker
   LatLng? _phonePos; // the monitor's phone
   DateTime? _phoneAt;
@@ -342,6 +343,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
           : (DateTime.tryParse('${loc['updated_at'] ?? ''}'.replaceFirst(' ', 'T')) ?? DateTime.now());
       _trackerSpeed = _numOf(loc['speed']) ?? 0;
       _trackerCourse = _numOf(loc['course']);
+      _trackerNote = '${loc['speed_note'] ?? ''}';
       final isNew = _busPos == null || RoutePlanner.meters(_busPos!, p) >= 1;
       // The road from the tracker's last fix to this one (server road matching), for the glide.
       if (isNew) {
@@ -413,6 +415,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
 
   String get _sourceLabel {
     if (_trackerFresh) {
+      if (_trackerNote == 'gps_weak') return 'Bus tracker · weak GPS, last good position';
       if (_trackerAge <= _trackerFreshSec) return 'Bus tracker · live';
       return _trackerState == 'parked' ? 'Bus tracker · parked' : 'Bus tracker · standing';
     }

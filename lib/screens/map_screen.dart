@@ -115,6 +115,10 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
   double _speed = 0.0;
   String _lastUpdated = '';
   String _busState = ''; // from the server: moving | idle | parked | nosignal | offline ('' = old server)
+  /// Why the server shows no speed: gps_weak (the GPS dropped out - the last good position is shown), stale,
+  /// parked, idle, nosignal, offline; '' when the speed is live. And where the bus is: road | parking | gps | held.
+  String _speedNote = '';
+  String _place = '';
   int? _ageSec;       // how old the bus position was when fetched (server clock), null if unknown
   DateTime? _ageAt;   // when that was
   bool _full = false; // full-screen map
@@ -376,7 +380,11 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
 
         // Bus location (use active location, or last_known_location if outside active window)
         final locData = active ? res['location'] : (res['last_known_location'] ?? res['location']);
-        if (locData is Map) _locSource = '${locData['source'] ?? ''}';
+        if (locData is Map) {
+          _locSource = '${locData['source'] ?? ''}';
+          _speedNote = '${locData['speed_note'] ?? ''}';
+          _place = '${locData['place'] ?? ''}';
+        }
         final bs = res['bus_status'];
         _busState = bs is Map ? '${bs['state'] ?? ''}' : '';
         LatLng? busPos;
@@ -549,6 +557,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
     _ageSec = a is num ? a.toInt() : int.tryParse('${a ?? ''}');
     _ageAt = DateTime.now();
     _locSource = src;
+    _speedNote = '${locData['speed_note'] ?? ''}';
+    _place = '${locData['place'] ?? ''}';
     setState(() {
       _speed = spd;
       _lastUpdated = locData['updated_at']?.toString() ?? '';
@@ -705,6 +715,15 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
   /// The bus is standing still with its engine off - a parked tracker only reports every few minutes, so
   /// a quiet bus is not a lost one.
   bool get _busParked => _busState == 'parked';
+
+  /// The label above a bus that is not driving: why it shows no speed.
+  String get _standLabel {
+    if (_speedNote == 'gps_weak') return 'GPS WEAK';
+    if (_speedNote == 'nosignal' || _busState == 'nosignal') return 'NO GPS';
+    if (_busParked || _place == 'parking') return 'PARKED';
+    if (_speedNote == 'stale' || _busState == 'offline') return 'NO SIGNAL';
+    return 'STOPPED';
+  }
 
   /// The bus has really stopped reporting (tracker off / no data). Trusts the server's verdict; only an
   /// older server that does not send one falls back to the age of the last position.
@@ -1357,7 +1376,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
       pill: !_showBusTag
           ? null
           : PillStyle(
-              text: !active ? 'OFFLINE' : (moving ? '${_speed.toInt()} km/h' : (_busParked ? 'PARKED' : 'STOPPED')),
+              text: !active ? 'OFFLINE' : (moving ? '${_speed.toInt()} km/h' : _standLabel),
               color: active ? const Color(0xFF1E3C72) : const Color(0xFF616161),
               dot: active ? (moving ? Colors.greenAccent : Colors.orangeAccent) : null,
             ),
@@ -1431,7 +1450,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
                 ),
                 const SizedBox(width: 4),
                 Text(
-                  isMoving ? '${_speed.toInt()} km/h' : 'STOPPED',
+                  isMoving ? '${_speed.toInt()} km/h' : _standLabel,
                   style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
                 ),
               ] else
@@ -1677,7 +1696,10 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
           ? (_targetLabel == 'to school' ? 'school is next' : 'your stop is next')
           : '$_stopsBefore stop${_stopsBefore == 1 ? '' : 's'} before ${_targetLabel == 'to school' ? 'school' : 'yours'}';
     }
-    return [trip, phase, if (stops != null) stops].join(' · ');
+    final gps = !_travelling ? null
+        : _speedNote == 'gps_weak' ? 'GPS weak - last known position'
+        : (_place == 'parking' && !_busParked ? 'in a car park' : null);
+    return [trip, phase, if (stops != null) stops, if (gps != null) gps].join(' · ');
   }
   void _locateBus() {
     _showBanner('Locating live bus position...');
