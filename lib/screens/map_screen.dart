@@ -153,6 +153,12 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
   bool _routeHidden = false; // "Bus and home only" (school setting): no line, no arrival time, no distance
   bool _showSpeed = true; // school setting: the speed and the Stopped / Parked tag on the bus
   bool _showLive = true; // school setting: the Live badge and the last-updated time
+  /// Every part of this screen the school can switch off (App Module Settings -> Parent map -> What parents see).
+  /// A part not listed - an older portal - is shown.
+  final Map<String, bool> _pv = {};
+  bool _on(String k) => _pv[k] ?? true;
+  /// The speed / Stopped tag on the bus: its own switch; before it existed, the speed switch.
+  bool get _showBusTag => _pv['bus_tag'] ?? _showSpeed;
 
   @override
   void initState() {
@@ -433,12 +439,20 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
         }
         // What the school shows parents besides the map (App Module Settings -> Parent map). Shown unless switched off.
         final pv = res['parent_view'];
-        final showSpeed = pv is Map ? pv['speed'] != false : true;
-        final showLive = pv is Map ? pv['live'] != false : true;
-        if (showSpeed != _showSpeed || showLive != _showLive) {
+        final next = <String, bool>{
+          if (pv is Map)
+            for (final e in pv.entries)
+              if (e.value is bool) '${e.key}': e.value as bool,
+        };
+        final showSpeed = next['speed_tile'] ?? next['speed'] ?? true;
+        final showLive = next['live'] ?? true;
+        if (showSpeed != _showSpeed || showLive != _showLive || next.toString() != _pv.toString()) {
           setState(() {
             _showSpeed = showSpeed;
             _showLive = showLive;
+            _pv
+              ..clear()
+              ..addAll(next);
           });
         }
 
@@ -915,7 +929,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
         // The bus - its number and plate - and nothing else. Not the child's name: siblings share a
         // bus, so the screen is about the bus.
         title: Text(
-          _busTitle,
+          _on('title') ? _busTitle : 'Bus Tracking',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
@@ -984,7 +998,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
                       rotate: true,
                       markers: [
                         // 1. School Marker
-                        if (_schoolLocation != null)
+                        if (_schoolLocation != null && _on('school'))
                           Marker(
                             point: _schoolLocation!,
                             width: 170,
@@ -999,7 +1013,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
                           ),
 
                         // 2. Student Home Marker
-                        if (_homeLocation != null)
+                        if (_homeLocation != null && _on('home'))
                           Marker(
                             point: _homeLocation!,
                             width: 70,
@@ -1013,7 +1027,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
                           ),
 
                         // 4. Parent's Own Location Marker
-                        if (_parentLocation != null)
+                        if (_parentLocation != null && _on('me'))
                           Marker(
                             point: _parentLocation!,
                             width: 55,
@@ -1038,7 +1052,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
                               // bus drives. Stopped: the bus icon, kept upright.
                               Marker(point: pos, width: 56, height: 56, rotate: _speed <= 3, child: _buildBusIcon()),
                               // Its speed label: always upright, above the bus (unless the school hides the speed).
-                              if (_showSpeed)
+                              if (_showBusTag)
                                 Marker(point: pos, width: 110, height: 104, rotate: true,
                                     child: Align(alignment: Alignment.topCenter, child: _buildBusPill())),
                             ]),
@@ -1080,12 +1094,14 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
                   top: 16 + topInset,
                   child: Column(
                     children: [
+                      if (_on('fullscreen'))
                       _buildFloatingAction(
                         icon: _full ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded,
                         tooltip: _full ? 'Exit full screen' : 'Full screen',
                         onTap: () => _setFull(!_full),
                       ),
                       // Compass: appears once the map is turned; one tap brings north back up.
+                      if (_on('compass'))
                       ValueListenableBuilder<double>(
                         valueListenable: _rotation,
                         builder: (context, rot, _) {
@@ -1215,7 +1231,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
 
   Widget _fullPill() {
     final parts = [
-      if (_etaMinutes > 0) '~$_etaMinutes min $_targetLabel',
+      if (_etaMinutes > 0 && _on('eta')) '~$_etaMinutes min $_targetLabel',
       if (_positionLive && _showSpeed) '${_speed.toInt()} km/h' else if (!_positionLive && _showLive) _freshLabel,
     ];
     if (parts.isEmpty) parts.add(_status.$1);
@@ -1237,11 +1253,11 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
   /// The official Google map: the same pins, bus and road line as the other maps.
   Widget _googleMap(double topInset) {
     final pins = <GPin>[
-      if (_schoolLocation != null)
+      if (_schoolLocation != null && _on('school'))
         GPin(id: 'school', pos: _schoolLocation!, style: PinStyle(size: 34, color: const Color(0xFF4A148C), icon: Icons.school_rounded, label: _schoolName)),
-      if (_homeLocation != null)
+      if (_homeLocation != null && _on('home'))
         GPin(id: 'home', pos: _homeLocation!, style: const PinStyle(size: 34, color: Color(0xFF2E7D32), icon: Icons.home_rounded, label: 'Your stop')),
-      if (_parentLocation != null)
+      if (_parentLocation != null && _on('me'))
         GPin(id: 'me', pos: _parentLocation!, style: const PinStyle(size: 30, color: Color(0xFF0288D1), icon: Icons.person_pin_circle_rounded, label: 'You')),
     ];
     final src = MapConfig.instance.value;
@@ -1306,7 +1322,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
       ),
       heading: _busBearing,
       rotate: moving,
-      pill: !_showSpeed
+      pill: !_showBusTag
           ? null
           : PillStyle(
               text: !active ? 'OFFLINE' : (moving ? '${_speed.toInt()} km/h' : (_busParked ? 'PARKED' : 'STOPPED')),
@@ -1455,6 +1471,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
             style: TextStyle(fontSize: 15, color: Color(0xFF64748B), height: 1.5),
           ),
           const SizedBox(height: 48),
+          if (_on('shift_times'))
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
@@ -1576,7 +1593,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
           if (_busParked) return ('Bus has not started yet', _muted, Icons.local_parking_rounded);
           if (near) return ('Bus is arriving at your stop', amber, Icons.notifications_active_rounded);
           // With no arrival time to go by ("Bus and home only"), a bus that is live and not parked is on its way.
-          return (_etaMinutes > 0 || _routeHidden ? 'Bus is on the way to your home' : 'Waiting for the bus', _blue, Icons.near_me_rounded);
+          return (_etaMinutes > 0 || _routeHidden || !_on('eta') ? 'Bus is on the way to your home' : 'Waiting for the bus', _blue, Icons.near_me_rounded);
       }
     }
     switch (_childStage) {
@@ -1651,7 +1668,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
 
   Widget _buildBottomMetricsCard() {
     final (text, color, icon) = _status;
-    final eta = _travelling && _etaMinutes > 0 ? DateTime.now().add(Duration(minutes: _etaMinutes)) : null;
+    final eta = _travelling && _etaMinutes > 0 && _on('eta') ? DateTime.now().add(Duration(minutes: _etaMinutes)) : null;
     final live = _positionLive;
     void toggle() => setState(() => _cardOpenChoice = !_cardOpen);
 
@@ -1690,10 +1707,12 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
                     const SizedBox(width: 9),
                     Expanded(
                       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        if (_on('status'))
                         Text(text, maxLines: 1, overflow: TextOverflow.ellipsis,
                             style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
+                        if (_on('phase') || !_on('status'))
                         Text(
-                            _phaseLine,
+                            _on('phase') ? _phaseLine : (_currentShift == 'morning' ? 'Morning trip' : 'Afternoon trip'),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(fontSize: 11, color: _muted)),
@@ -1721,15 +1740,17 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
 
               // Details - above the arrival bar, so the card grows upwards.
               if (_cardOpen) ...[
-                const SizedBox(height: 12),
-                _timeline(),
+                if (_on('timeline')) ...[
+                  const SizedBox(height: 12),
+                  _timeline(),
+                ],
                 // Speed, distance and last update - each only when the school shows it.
-                if (_showSpeed || !_routeHidden || _showLive) ...[
+                if (_showSpeed || (!_routeHidden && _on('distance')) || _showLive) ...[
                 const SizedBox(height: 10),
                 Row(children: [
                   for (final t in [
                     if (_showSpeed) _tile(Icons.speed_rounded, live ? '${_speed.toInt()} km/h' : '--', 'Speed'),
-                    if (!_routeHidden)
+                    if (!_routeHidden && _on('distance'))
                       _tile(Icons.alt_route_rounded, _travelling && _roadDistanceKm > 0 ? '${_roadDistanceKm.toStringAsFixed(1)} km' : '--',
                           _travelling ? _targetLabel : 'Distance'),
                     if (_showLive) _tile(Icons.update_rounded, live ? 'Live' : _freshLabel.replaceFirst('Updated ', '').replaceFirst('Last seen ', ''), 'Updated'),
@@ -1763,10 +1784,10 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    _roundButton(Icons.my_location_rounded, _locateBus, light: true),
+                    if (_on('locate')) _roundButton(Icons.my_location_rounded, _locateBus, light: true),
                   ]),
                 )
-              else
+              else if (_on('locate'))
                 SizedBox(
                   height: 38,
                   child: OutlinedButton.icon(
@@ -1802,11 +1823,13 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
     final morning = _currentShift == 'morning';
     final step = _childStage == 'done' ? 2 : (_childStage == 'on_bus' ? 1 : 0);
     final labels = morning ? ['Pickup', 'On the way', 'At school'] : ['Boarding', 'On the way', 'Home'];
-    final times = [
-      morning ? (_pickedAt != null ? _t12(_pickedAt) : '') : '',
-      _pickedAt != null ? _t12(_pickedAt) : '',
-      _droppedAt != null ? _t12(_droppedAt) : '',
-    ];
+    final times = !_on('times')
+        ? const ['', '', '']
+        : [
+            morning ? (_pickedAt != null ? _t12(_pickedAt) : '') : '',
+            _pickedAt != null ? _t12(_pickedAt) : '',
+            _droppedAt != null ? _t12(_droppedAt) : '',
+          ];
     Widget dot(int i) {
       final done = i < step || (i == step && _childStage == 'done');
       final current = i == step && !done;
