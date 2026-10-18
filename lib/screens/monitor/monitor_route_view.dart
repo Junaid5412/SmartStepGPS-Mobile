@@ -697,7 +697,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
       if (!w.isMorning && schoolStop != null) schoolStop,
       if (active != null && active != schoolStop) active,
       // Morning, the school chosen with homes still left: it is next, so the line goes there first.
-      if (w.isMorning && active != null && active == schoolStop) schoolStop,
+      if (w.isMorning && active != null && active == schoolStop) active,
     ];
     final end = (w.isMorning && schoolStop != null && !lead.contains(schoolStop)) ? schoolStop : null;
     final rest = todo.where((s) => !lead.contains(s) && s != end && !_skipped.contains(s.key)).toList();
