@@ -150,6 +150,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
   String _targetLabel = 'to your stop';
   String _locSource = ''; // tracker | monitor - a switch re-draws the line at once
   int? _stopsBefore; // full-route view: stops the bus makes before this parent's (school setting)
+  bool _routeHidden = false; // "Bus and home only" (school setting): no line, no arrival time, no distance
+  bool _showSpeed = true; // school setting: the speed and the Stopped / Parked tag on the bus
+  bool _showLive = true; // school setting: the Live badge and the last-updated time
 
   @override
   void initState() {
@@ -427,6 +430,29 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
           _routedSig = 'server'; // switching back to the direct view re-draws at once
         } else {
           _stopsBefore = null;
+        }
+        // What the school shows parents besides the map (App Module Settings -> Parent map). Shown unless switched off.
+        final pv = res['parent_view'];
+        final showSpeed = pv is Map ? pv['speed'] != false : true;
+        final showLive = pv is Map ? pv['live'] != false : true;
+        if (showSpeed != _showSpeed || showLive != _showLive) {
+          setState(() {
+            _showSpeed = showSpeed;
+            _showLive = showLive;
+          });
+        }
+
+        // "Bus and home only": the server sends an empty route. Clear whatever an earlier view drew.
+        final hidden = rt is Map && rt['hidden'] == true;
+        if (hidden != _routeHidden || (hidden && _roadPolyline.isNotEmpty)) {
+          setState(() {
+            _routeHidden = hidden;
+            if (hidden) {
+              _roadPolyline = [];
+              _etaMinutes = 0;
+              _roadDistanceKm = 0;
+            }
+          });
         }
 
         // The road line: where the bus is going for this child. Re-drawn at once when the trip
@@ -1011,9 +1037,10 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
                               // The bus itself. Moving: an arrow that turns with the map, so it always points the way the
                               // bus drives. Stopped: the bus icon, kept upright.
                               Marker(point: pos, width: 56, height: 56, rotate: _speed <= 3, child: _buildBusIcon()),
-                              // Its speed label: always upright, above the bus.
-                              Marker(point: pos, width: 110, height: 104, rotate: true,
-                                  child: Align(alignment: Alignment.topCenter, child: _buildBusPill())),
+                              // Its speed label: always upright, above the bus (unless the school hides the speed).
+                              if (_showSpeed)
+                                Marker(point: pos, width: 110, height: 104, rotate: true,
+                                    child: Align(alignment: Alignment.topCenter, child: _buildBusPill())),
                             ]),
                     ),
 
@@ -1189,8 +1216,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
   Widget _fullPill() {
     final parts = [
       if (_etaMinutes > 0) '~$_etaMinutes min $_targetLabel',
-      _positionLive ? '${_speed.toInt()} km/h' : _freshLabel,
+      if (_positionLive && _showSpeed) '${_speed.toInt()} km/h' else if (!_positionLive && _showLive) _freshLabel,
     ];
+    if (parts.isEmpty) parts.add(_status.$1);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
       decoration: BoxDecoration(
@@ -1278,11 +1306,13 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
       ),
       heading: _busBearing,
       rotate: moving,
-      pill: PillStyle(
-        text: !active ? 'OFFLINE' : (moving ? '${_speed.toInt()} km/h' : (_busParked ? 'PARKED' : 'STOPPED')),
-        color: active ? const Color(0xFF1E3C72) : const Color(0xFF616161),
-        dot: active ? (moving ? Colors.greenAccent : Colors.orangeAccent) : null,
-      ),
+      pill: !_showSpeed
+          ? null
+          : PillStyle(
+              text: !active ? 'OFFLINE' : (moving ? '${_speed.toInt()} km/h' : (_busParked ? 'PARKED' : 'STOPPED')),
+              color: active ? const Color(0xFF1E3C72) : const Color(0xFF616161),
+              dot: active ? (moving ? Colors.greenAccent : Colors.orangeAccent) : null,
+            ),
     );
   }
 
@@ -1545,7 +1575,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
           if (silent) return ('Waiting for the bus signal', _muted, Icons.wifi_off_rounded);
           if (_busParked) return ('Bus has not started yet', _muted, Icons.local_parking_rounded);
           if (near) return ('Bus is arriving at your stop', amber, Icons.notifications_active_rounded);
-          return (_etaMinutes > 0 ? 'Bus is on the way to your home' : 'Waiting for the bus', _blue, Icons.near_me_rounded);
+          // With no arrival time to go by ("Bus and home only"), a bus that is live and not parked is on its way.
+          return (_etaMinutes > 0 || _routeHidden ? 'Bus is on the way to your home' : 'Waiting for the bus', _blue, Icons.near_me_rounded);
       }
     }
     switch (_childStage) {
@@ -1669,6 +1700,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
                       ]),
                     ),
                     const SizedBox(width: 6),
+                    if (_showLive)
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                       decoration: BoxDecoration(
@@ -1691,15 +1723,19 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
               if (_cardOpen) ...[
                 const SizedBox(height: 12),
                 _timeline(),
+                // Speed, distance and last update - each only when the school shows it.
+                if (_showSpeed || !_routeHidden || _showLive) ...[
                 const SizedBox(height: 10),
                 Row(children: [
-                  _tile(Icons.speed_rounded, live ? '${_speed.toInt()} km/h' : '--', 'Speed'),
-                  const SizedBox(width: 6),
-                  _tile(Icons.alt_route_rounded, _travelling && _roadDistanceKm > 0 ? '${_roadDistanceKm.toStringAsFixed(1)} km' : '--',
-                      _travelling ? _targetLabel : 'Distance'),
-                  const SizedBox(width: 6),
-                  _tile(Icons.update_rounded, live ? 'Live' : _freshLabel.replaceFirst('Updated ', '').replaceFirst('Last seen ', ''), 'Updated'),
+                  for (final t in [
+                    if (_showSpeed) _tile(Icons.speed_rounded, live ? '${_speed.toInt()} km/h' : '--', 'Speed'),
+                    if (!_routeHidden)
+                      _tile(Icons.alt_route_rounded, _travelling && _roadDistanceKm > 0 ? '${_roadDistanceKm.toStringAsFixed(1)} km' : '--',
+                          _travelling ? _targetLabel : 'Distance'),
+                    if (_showLive) _tile(Icons.update_rounded, live ? 'Live' : _freshLabel.replaceFirst('Updated ', '').replaceFirst('Last seen ', ''), 'Updated'),
+                  ].indexed) ...[if (t.$1 > 0) const SizedBox(width: 6), t.$2],
                 ]),
+                ],
                 ..._crewRow(),
               ],
 

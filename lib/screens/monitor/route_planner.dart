@@ -35,7 +35,9 @@ class RoutePlan {
 /// for "near". The order itself is worked out on the phone (nearest first, then 2-opt and moving
 /// single stops until nothing improves - exact enough for school-bus sized routes, and instant).
 /// Without network the same is done with straight-line distances, so the page never stops working.
-/// The school is not part of the order: it is first in the evening and last in the morning anyway.
+/// The school is not one of the stops to order: it is first in the evening and last in the morning. In the
+/// morning the drive from the last home to school IS counted, so the order does not drive towards school and
+/// then back away from it.
 class RoutePlanner {
   static const _base = 'https://router.project-osrm.org';
   static const _timeout = Duration(seconds: 6);
@@ -45,7 +47,7 @@ class RoutePlanner {
   static double meters(LatLng a, LatLng b) => _dist.as(LengthUnit.Meter, a, b);
 
   /// [start] is where the bus is now; [stops] the stops still to visit. [end] (the school in the
-  /// morning) only adds its leg to the times - it does not change the order.
+  /// morning) is visited last: its leg counts when choosing the order, and is added to the times.
   /// [road] false: straight lines only, no network - an instant first answer (the road plan follows).
   static Future<RoutePlan> plan(LatLng start, List<LatLng> stops, {LatLng? end, bool road = true}) async {
     if (stops.isEmpty && end == null) return const RoutePlan([], [], [], [], false);
@@ -60,7 +62,7 @@ class RoutePlanner {
     }
     final roadTimes = m != null;
     m ??= _straight(pts);
-    final order = _solve(m.sec, stops.length);
+    final order = _solve(m.sec, stops.length, end: end != null ? pts.length - 1 : null);
     final seq = [0, for (final i in order) i + 1, if (end != null) pts.length - 1];
     final legM = <double>[for (var i = 1; i < seq.length; i++) m.m[seq[i - 1]][seq[i]]];
     final legS = <double>[for (var i = 1; i < seq.length; i++) m.sec[seq[i - 1]][seq[i]]];
@@ -100,8 +102,9 @@ class RoutePlanner {
     return _Matrix(sec, mm);
   }
 
-  /// The shortest open path 0 -> every stop (1..n), in any order, ending anywhere.
-  static List<int> _solve(List<List<double>> c, int n) {
+  /// The shortest path 0 -> every stop (1..n), in any order - ending anywhere, or at [end] (the school in the
+  /// morning: the last leg, from the last stop to school, is part of the cost).
+  static List<int> _solve(List<List<double>> c, int n, {int? end}) {
     if (n == 0) return [];
     double cost(List<int> o) {
       var t = 0.0, p = 0;
@@ -109,6 +112,7 @@ class RoutePlanner {
         t += c[p][i + 1];
         p = i + 1;
       }
+      if (end != null) t += c[p][end];
       return t;
     }
 
@@ -249,7 +253,18 @@ class RouteLine {
 
     if (near != null) {
       scan(near - 60, near + 3000);
-      if (best != null && best!.off <= 60) return best;
+      if (best != null && best!.off <= 60) {
+        // An out-and-back stretch, or a road the route uses twice: GPS a few metres off could fit the way back
+        // better than the way there. Take the earliest stretch ahead that fits about as well.
+        final tol = best!.off + 12;
+        RouteSpot? first;
+        for (var i = 0; i < pts.length - 1; i++) {
+          if (_cum[i + 1] < near - 60 || _cum[i] > near + 3000) continue;
+          final s = _onSegment(i, p);
+          if (s.off <= tol && (first == null || s.along < first.along)) first = s;
+        }
+        return first ?? best;
+      }
     }
     final local = best;
     best = null;

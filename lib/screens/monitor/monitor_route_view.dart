@@ -133,6 +133,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
   // ---- where the bus is ---------------------------------------------------------------------------
   bool _phoneOn = false;
   bool _tracking = false;
+  bool _pollBusy = false; // a tracker poll is on its way
   Timer? _trackerPoll; // the next tracker poll (rescheduled after each answer, at the server's pace)
   LatLng? _busPos; // the tracker
   DateTime? _busAt; // when the server received that fix (from its age_sec - not this phone's clock)
@@ -177,6 +178,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
   int _planGen = 0; // a newer plan makes a slower, older answer worthless
   String? _activeKey; // the stop she is at, or chose
   final Set<String> _skipped = {};
+  String? _planShift; // the shift the skips and the chosen stop belong to
   String? _banner;
   Timer? _bannerTimer;
   Timer? _clock; // arrival times move with the clock
@@ -259,6 +261,8 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
       _startTracking();
     } else if (!want && _tracking) {
       _stopTracking();
+    } else if (want && store.busDeviceId > 0 && _trackerPoll == null && !_pollBusy) {
+      _pollTracker(); // the bus was assigned after this page opened: start following its tracker now
     }
   }
 
@@ -299,6 +303,8 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
   /// for (3 s moving, 5 s standing, up to 10 s parked), so a slow answer never piles polls up.
   Future<void> _pollTracker() async {
     _trackerPoll?.cancel();
+    _trackerPoll = null;
+    _pollBusy = true;
     var next = 5;
     try {
       final r = await ApiService.getBusLocation(store.busDeviceId, lite: true).timeout(const Duration(seconds: 10));
@@ -317,6 +323,9 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
         final l = r['location'] ?? r['last_known_location'];
         if (l is Map && l['source'] != 'monitor') loc = l;
       }
+      // A placeholder is not a fix: a bus that has never reported is put at the school by the server. Taken as a
+      // live tracker it planned the route from the school and kept the phone backup from taking over.
+      if (loc != null && (loc['source'] == 'placeholder' || _numOf(loc['age_sec']) == null)) loc = null;
       final lat = _numOf(loc?['lat']), lng = _numOf(loc?['lng']);
       if (loc == null || lat == null || lng == null) {
         setState(() {});
@@ -342,6 +351,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     } catch (_) {
       /* next poll */
     } finally {
+      _pollBusy = false;
       if (_tracking && mounted && store.busDeviceId > 0) {
         _trackerPoll = Timer(Duration(seconds: next), _pollTracker);
       }
@@ -368,7 +378,12 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
       (_trackerAge <= _trackerFreshSec ||
           (_trackerOnline && (_trackerState == 'parked' || _trackerState == 'idle') && _trackerAge <= 900));
 
-  bool get _phoneFresh => _phoneAt != null && DateTime.now().difference(_phoneAt!).inSeconds <= _phoneFreshSec;
+  /// The phone is reporting. Its own last-fix time: standing at a stop the phone keeps sending fixes but holds
+  /// the bus still (no new position), and judging by the last MOVE made the backup lapse after 30 s at a stop.
+  bool get _phoneFresh {
+    final at = _phoneOn ? (PhoneLocation.instance.at ?? _phoneAt) : _phoneAt;
+    return at != null && DateTime.now().difference(at).inSeconds <= _phoneFreshSec;
+  }
 
   /// The phone may stand in for the bus: the school switched the Monitor Phone Backup on - or the bus has
   /// no tracker at all.
@@ -532,7 +547,10 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
         final need = waiting.where((s) => !_hasNotice(s, shift)).length;
         st = need > 0 ? _St.todo : (allLeave ? _St.leave : _St.done);
       } else {
-        st = onBus.isNotEmpty ? _St.todo : (allLeave ? _St.leave : _St.done);
+        // Still to do: a child on the bus for this home, or one still to board at school (not on leave).
+        // Before, a home counted as done until its child boarded: "12 of 12 done" at the start of the trip.
+        final toBoard = waiting.where((s) => !_hasNotice(s, shift)).length;
+        st = (onBus.isNotEmpty || toBoard > 0) ? _St.todo : (allLeave ? _St.leave : _St.done);
       }
       final pt = f.hasCoords ? LatLng(double.parse('${f.stopLat}'), double.parse('${f.stopLng}')) : null;
       out.add(_Stop(f.key, f.parentName, f.address, pt, f, f.students, st));
@@ -643,15 +661,28 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     // between the next stop and the school, and no line from the bus at all.
     final start = _best;
     if (start == null) return;
+    // A new shift starts clean: a family skipped, or a stop chosen, in the morning means nothing in the evening.
+    if (_planShift != w.key) {
+      if (_planShift != null) {
+        _skipped.clear();
+        _activeKey = null;
+      }
+      _planShift = w.key;
+    }
     final stops = _stops(w);
     final todo = stops.where((s) => s.state == _St.todo && s.point != null).toList();
     final sig = '${w.key}|${todo.map((s) => s.key).join(',')}|$_activeKey|${_skipped.join(',')}';
     final moved = _planFrom == null ? 1e9 : RoutePlanner.meters(_planFrom!, start);
     final age = DateTime.now().difference(_planAt);
     final changed = sig != _planSig;
-    final offRoad = _offSince != null && DateTime.now().difference(_offSince!) > const Duration(seconds: 8);
-    final drifting = moved > 800 || (age > const Duration(minutes: 3) && moved > 300);
-    if (!changed && !offRoad && !drifting) return;
+    // Off the road only counts against a ROAD line: a straight-line estimate (routing service down) is never
+    // driven exactly, and re-planned it every 15 s. That estimate is retried for the road line once a minute.
+    final roadLine = _plan?.road ?? false;
+    final offRoad = roadLine && _offSince != null && DateTime.now().difference(_offSince!) > const Duration(seconds: 8);
+    final retryRoad = _plan != null && !roadLine && age > const Duration(seconds: 60);
+    // Driving along the planned road is what it is for: only a big move OFF it, or an old plan, re-plans.
+    final drifting = (moved > 800 && _offSince != null) || (age > const Duration(minutes: 3) && moved > 300);
+    if (!changed && !offRoad && !drifting && !retryRoad) return;
     if (_planning && !changed) { // a change of stops does not wait: it starts over, and the older answer is dropped
       _planAgain = true;
       return;
@@ -665,6 +696,8 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     final lead = <_Stop>[
       if (!w.isMorning && schoolStop != null) schoolStop,
       if (active != null && active != schoolStop) active,
+      // Morning, the school chosen with homes still left: it is next, so the line goes there first.
+      if (w.isMorning && active != null && active == schoolStop) schoolStop,
     ];
     final end = (w.isMorning && schoolStop != null && !lead.contains(schoolStop)) ? schoolStop : null;
     final rest = todo.where((s) => !lead.contains(s) && s != end && !_skipped.contains(s.key)).toList();
@@ -682,7 +715,12 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
         if (!mounted || gen != _planGen) return;
         final keys = keysOf(quick);
         final byKey = {for (final s in todo) s.key: s};
-        _apply(quick, [start, for (final k in keys) byKey[k]!.point!], false, keys, rest, end, sig, start);
+        // A road line already on screen stays until the new road line arrives (instead of straight lines for a
+        // few seconds after every mark): only the order, the next stop and the times change now.
+        _apply(quick, [start, for (final k in keys) byKey[k]!.point!], false, keys, rest, end, sig, start, orderOnly: _plan?.road ?? false);
+        // Several children marked one after another: one road request for the last, not one for each.
+        await Future.delayed(const Duration(milliseconds: 700));
+        if (!mounted || gen != _planGen) return;
       }
 
       // 2. The road plan: real driving times for the order, and the line along the roads - from the bus
@@ -714,13 +752,22 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
 
   /// Puts a plan on screen: the order, the times, the line - and the bus onto the new line.
   void _apply(RoutePlan plan, List<LatLng> line, bool road, List<String> keys, List<_Stop> rest, _Stop? end,
-      String sig, LatLng start, {bool legsDone = false}) {
+      String sig, LatLng start, {bool legsDone = false, bool orderOnly = false}) {
     if (!legsDone) {
       _legSec.clear();
       for (var i = 0; i < plan.order.length && i < plan.legSeconds.length; i++) {
         _legSec[rest[plan.order[i]].key] = plan.legSeconds[i];
       }
       if (end != null && plan.legSeconds.length > plan.order.length) _legSec[end.key] = plan.legSeconds[plan.order.length];
+    }
+    if (orderOnly) {
+      setState(() {
+        _planKeys = keys;
+        _planSig = sig;
+        final p0 = _firstStopPoint(keys);
+        _leadStraight = p0 == null ? 0 : RoutePlanner.meters(start, p0);
+      });
+      return;
     }
     final route = RouteLine(line);
     // A glide along the OLD line cannot go on along the new one: finish it in a straight line.
@@ -732,8 +779,11 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
       _glide.duration = left < const Duration(milliseconds: 300) ? const Duration(milliseconds: 300) : left;
       _glide.forward(from: 0);
     }
-    final here = route.locate(shownNow ?? start);
-    final at = route.locate(start);
+    // Where the bus is NOW: the road plan took a few seconds, and the position it was asked from is behind
+    // the bus - placing it there made the arrow jump back at the end of the glide.
+    final nowPos = _glideTo ?? _best ?? start;
+    final here = route.locate(shownNow ?? nowPos);
+    final at = route.locate(nowPos);
     setState(() {
       _plan = RoutePlan(plan.order, line, plan.legMeters, plan.legSeconds, road);
       _route = route;

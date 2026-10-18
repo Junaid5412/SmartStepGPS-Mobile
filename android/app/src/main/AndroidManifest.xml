@@ -1,4 +1,13 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- The Google Maps SDK declares OpenGL ES 2.0 as REQUIRED. Google Play then hides the app from any device whose
+         catalog entry lists no OpenGL version - rugged handhelds such as the CHAINWAY C66 (Snapdragon 662, which does
+         support OpenGL ES 3.2) were "unsupported". Every Android phone has OpenGL ES 2.0, so it is declared as used,
+         not required; the maps work exactly as before. -->
+    <uses-feature
+        android:glEsVersion="0x00020000"
+        android:required="false"
+        tools:replace="android:required" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />

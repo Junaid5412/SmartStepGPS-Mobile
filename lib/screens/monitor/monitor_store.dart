@@ -118,7 +118,12 @@ class FamilyGroup {
     required this.students,
   });
 
-  bool get hasCoords => stopLat != null && stopLng != null;
+  /// A usable home pin: numbers (the server sends DECIMAL as text), inside the world, and not the 0,0 an
+  /// empty pin is sometimes saved as - that one made the road route fail and the map zoom out to the world.
+  bool get hasCoords {
+    final la = double.tryParse('${stopLat ?? ''}'), lo = double.tryParse('${stopLng ?? ''}');
+    return la != null && lo != null && la.abs() <= 90 && lo.abs() <= 180 && !(la.abs() < 1 && lo.abs() < 1);
+  }
   List<String> get names => students.map((s) => s['name']?.toString() ?? 'Student').toList();
 }
 
@@ -155,6 +160,11 @@ class MonitorStore extends ChangeNotifier {
 
   Timer? _ticker;
   String _lastStates = '';
+  int _loadGen = 0; // a newer load makes an older answer that arrives late worthless
+  /// Marks shown before the roster confirms them: 'student id|shift' -> (event, when). A roster asked for
+  /// before a mark (a reload already on its way, the 20 s tick) would otherwise undo it on screen, and the
+  /// next stop and the route would jump back to a child already picked up.
+  final Map<String, (String, DateTime)> _localMarks = {};
   DateTime _loadedDay = DateTime.now();
 
   MonitorStore() {
@@ -197,11 +207,15 @@ class MonitorStore extends ChangeNotifier {
       loading = true;
       notifyListeners();
     }
+    final gen = ++_loadGen;
+    final asked = DateTime.now();
     try {
       final r = await ApiService.getRoster();
+      if (gen != _loadGen) return; // a newer load is on its way: its answer counts, not this older one
       if (r['success'] == true) {
         final now = DateTime.now();
         students = (r['data'] as List?) ?? [];
+        _reapplyLocalMarks(asked);
         final sch = r['school'];
         if (sch is Map) {
           schoolName = '${sch['name'] ?? 'School'}';
@@ -242,10 +256,38 @@ class MonitorStore extends ChangeNotifier {
         error = err;
       }
     } catch (e) {
+      if (gen != _loadGen) return;
       error = 'No connection. Pull down to try again.';
     }
     loading = false;
     notifyListeners();
+  }
+
+  /// Put back the marks made after this roster was asked for (it cannot know them yet). A mark the roster
+  /// already shows is confirmed and forgotten; after 90 s the roster is trusted whatever it says.
+  void _reapplyLocalMarks(DateTime asked) {
+    final now = DateTime.now();
+    _localMarks.removeWhere((k, v) => now.difference(v.$2).inSeconds > 90);
+    if (_localMarks.isEmpty) return;
+    final confirmed = <String>[];
+    for (final s in students) {
+      if (s is! Map) continue;
+      for (final shift in const ['morning', 'afternoon']) {
+        final k = '${s['id']}|$shift';
+        final m = _localMarks[k];
+        if (m == null) continue;
+        if (eventOf(s, shift) == m.$1) {
+          confirmed.add(k);
+        } else if (m.$2.isAfter(asked)) {
+          final key = shift == 'morning' ? 'morning_status' : 'afternoon_status';
+          final cur = s[key];
+          s[key] = {if (cur is Map) ...cur, 'event_type': m.$1};
+        }
+      }
+    }
+    for (final k in confirmed) {
+      _localMarks.remove(k);
+    }
   }
 
   // ---- per-shift views of the roster --------------------------------------------------------------
@@ -266,6 +308,7 @@ class MonitorStore extends ChangeNotifier {
       final key = shift == 'morning' ? 'morning_status' : 'afternoon_status';
       final cur = s[key];
       s[key] = {if (cur is Map) ...cur, 'event_type': type};
+      _localMarks['${s['id']}|$shift'] = (type, DateTime.now());
       changed = true;
     }
     if (changed) notifyListeners();
