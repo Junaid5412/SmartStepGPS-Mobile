@@ -411,7 +411,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
 
         // Smooth animate bus marker to new position (Uber-style glide)
         if (busPos != null) {
-          _animateBusTo(_onRoad(busPos));
+          _animateBusTo(_onRoad(busPos), path: _pathOf(locData is Map ? locData['path'] : null));
           if (_course != null && spd > 3) _busBearing = _course!;
         }
 
@@ -554,7 +554,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
       _lastUpdated = locData['updated_at']?.toString() ?? '';
     });
     if (lat != null && lng != null) {
-      _animateBusTo(_onRoad(LatLng(lat, lng)));
+      _animateBusTo(_onRoad(LatLng(lat, lng)), path: _pathOf(locData['path']));
       if (_course != null && spd > 3) _busBearing = _course!;
     }
   }
@@ -732,7 +732,17 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
   /// ─── Uber-Style Smooth Marker Animation ───────────────────────────────
   /// Smoothly glides bus marker from current position to [target] over 2.5s
   /// using 60fps interpolation with ease-out physics.
-  void _animateBusTo(LatLng target) {
+  /// The road from the last position to this one, as the server matched it ([[lat, lng], ...]); empty when none.
+  static List<LatLng> _pathOf(dynamic p) => [
+        if (p is List)
+          for (final q in p)
+            if (q is List && q.length >= 2 && q[0] is num && q[1] is num) LatLng((q[0] as num).toDouble(), (q[1] as num).toDouble()),
+      ];
+
+  /// [path]: the road from the last position to [target] (server road matching). When it fits - it ends at the target
+  /// and starts near where the bus is drawn - the bus glides ALONG it, round the bends, instead of in a straight line
+  /// across the buildings between two positions.
+  void _animateBusTo(LatLng target, {List<LatLng> path = const []}) {
     // First position: no animation needed, just place the marker
     if (_busLocation == null && _displayBusLocation == null) {
       setState(() {
@@ -780,6 +790,16 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
     // Save previous → new positions
     _previousBusLocation = from;
     _busLocation = target;
+    const dist = Distance();
+    final road = path.length >= 2 && dist.as(LengthUnit.Meter, path.last, target) <= 20 && dist.as(LengthUnit.Meter, from, path.first) <= 60
+        ? [from, ...path.sublist(0, path.length - 1), target]
+        : null;
+    final cum = <double>[0];
+    if (road != null) {
+      for (var i = 1; i < road.length; i++) {
+        cum.add(cum.last + dist.as(LengthUnit.Meter, road[i - 1], road[i]));
+      }
+    }
 
     // Stop any running animation
     _markerAnimController?.stop();
@@ -800,7 +820,19 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
     curved.addListener(() {
       if (!mounted) return;
       final t = curved.value;
-      final interpolated = _lerpLatLng(_previousBusLocation!, _busLocation!, t);
+      final LatLng interpolated;
+      if (road != null && cum.last > 0) {
+        // Along the road: the point t of the way along it, by distance.
+        final want = cum.last * t;
+        var i = 1;
+        while (i < cum.length - 1 && cum[i] < want) {
+          i++;
+        }
+        final seg = cum[i] - cum[i - 1];
+        interpolated = _lerpLatLng(road[i - 1], road[i], seg <= 0 ? 1 : ((want - cum[i - 1]) / seg).clamp(0.0, 1.0));
+      } else {
+        interpolated = _lerpLatLng(_previousBusLocation!, _busLocation!, t);
+      }
 
       _displayBusLocation = interpolated;
       _busPos.value = interpolated; // repaints only the bus marker layer

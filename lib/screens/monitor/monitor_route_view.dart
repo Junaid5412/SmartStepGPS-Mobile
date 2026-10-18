@@ -153,6 +153,8 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
   final ValueNotifier<double> _rotation = ValueNotifier(0); // the map's turn in degrees (0 = north up)
   late final AnimationController _glide;
   LatLng? _glideFrom, _glideTo;
+  RouteLine? _glidePath; // gliding along the road the server matched between two tracker fixes (off the planned line)
+  List<LatLng> _trackerPath = const []; // that road, as the last tracker poll sent it
   double? _glideAlongFrom, _glideAlongTo; // gliding ALONG the planned road (metres along it), when on it
   double? _targetAlong; // where on the road the glide ends
   double? _shownAlong; // where on the road the bus is drawn now (null: off the road)
@@ -341,6 +343,15 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
       _trackerSpeed = _numOf(loc['speed']) ?? 0;
       _trackerCourse = _numOf(loc['course']);
       final isNew = _busPos == null || RoutePlanner.meters(_busPos!, p) >= 1;
+      // The road from the tracker's last fix to this one (server road matching), for the glide.
+      if (isNew) {
+        final pp = loc['path'];
+        _trackerPath = [
+          if (pp is List)
+            for (final q in pp)
+              if (q is List && q.length >= 2) LatLng(_numOf(q[0]) ?? 0, _numOf(q[1]) ?? 0),
+        ];
+      }
       _busPos = p;
       _busAt = at;
       if (isNew) {
@@ -466,6 +477,14 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
     _targetAlong = hit?.along;
     _glideFrom = cur?.pos ?? hit?.point ?? p;
     _glideTo = hit?.point ?? p;
+    // Not along the planned line: along the road the server matched from the last tracker fix, when it fits.
+    _glidePath = null;
+    final tp = _trackerPath;
+    final gFrom = _glideFrom, gTo = _glideTo;
+    if (_glideAlongFrom == null && src && tp.length >= 2 && gFrom != null && gTo != null
+        && RoutePlanner.meters(tp.last, gTo) <= 20 && RoutePlanner.meters(gFrom, tp.first) <= 60) {
+      _glidePath = RouteLine([gFrom, ...tp.sublist(0, tp.length - 1), gTo]);
+    }
     _headFrom = cur?.heading ?? _heading;
     _headTo = _heading;
     _glide.duration = Duration(milliseconds: gap);
@@ -507,6 +526,12 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
         _lastTrim = DateTime.now();
         setState(() => _lineNow = route.from(d));
       }
+    } else if (_glidePath != null && _glidePath!.length > 0) {
+      final gp = _glidePath!;
+      final d = gp.length * t;
+      pos = gp.at(d);
+      head = gp.headingAt(d);
+      _shownAlong = t >= 1 ? _targetAlong : null;
     } else {
       pos = LatLng(a.latitude + (b.latitude - a.latitude) * t, a.longitude + (b.longitude - a.longitude) * t);
       var dh = (_headTo - _headFrom) % 360;
