@@ -52,6 +52,12 @@ android {
     }
 
     buildTypes {
+        // Local test builds (flutter run / build apk --debug) install NEXT TO the Play Store app as
+        // "Smart GPS DEV" instead of clashing with its signature. Release builds keep com.smartstep.gps.
+        debug {
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "-dev"
+        }
         release {
             signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true

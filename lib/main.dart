@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'screens/splash_screen.dart';
 import 'services/api_service.dart';
 import 'services/map_config.dart';
+import 'widgets/bottom_strip.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -62,9 +63,12 @@ class SmartStepApp extends StatelessWidget {
       // Keeps every screen clear of the navigation bar now that the app is edge-to-edge: the strip
       // under it is painted white and nothing - buttons, the last list item, the map card - sits
       // beneath the bar. Headers still run up under the status bar (they handle that themselves).
-      builder: (context, child) => ColoredBox(
-        color: Colors.white,
-        child: SafeArea(top: false, child: child ?? const SizedBox.shrink()),
+      builder: (context, child) => ValueListenableBuilder<Color>(
+        valueListenable: bottomStripColor,   // the splash sets its own background colour here
+        builder: (context, strip, _) => ColoredBox(
+          color: strip,
+          child: SafeArea(top: false, child: child ?? const SizedBox.shrink()),
+        ),
       ),
       home: const SplashScreen(),
     );

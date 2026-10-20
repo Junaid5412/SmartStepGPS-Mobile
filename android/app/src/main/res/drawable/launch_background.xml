@@ -5,9 +5,12 @@
      Android 12 and above ignore this and use values-v31/styles.xml instead. -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:drawable="@color/splash_background" />
-    <item>
+    <!-- 121 x 100 dp: the same size as the Android 12+ splash icon, the iOS launch logo and the app splash
+         (API 23+; Android 5 shows the bitmap at its own size). -->
+    <item android:width="121dp" android:height="100dp" android:gravity="center">
         <bitmap
-            android:gravity="center"
+            android:gravity="fill"
+            android:filter="true"
             android:src="@drawable/splash_logo" />
     </item>
 </layer-list>

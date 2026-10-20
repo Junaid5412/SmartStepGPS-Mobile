@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Android 12+ splash icon: the FULL logo (the same picture as the older-Android splash, the iOS
+     launch screen and the app's own splash), not just the launcher monogram - so the system splash and
+     the app's first screen are the same picture and read as one splash.
+     Android 12 draws this on a 240 dp square and shows only a 160 dp circle in its middle; insets of
+     24.8% / 29.2% leave the logo at 121 x 100 dp, which fits inside that circle with a small margin.
+     Fraction insets need API 28+; this drawable is only referenced from the -v31 themes. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:insetLeft="24.8%"
+    android:insetRight="24.8%"
+    android:insetTop="29.2%"
+    android:insetBottom="29.2%">
+    <bitmap
+        android:src="@drawable/splash_logo"
+        android:gravity="fill"
+        android:filter="true" />
+</inset>
