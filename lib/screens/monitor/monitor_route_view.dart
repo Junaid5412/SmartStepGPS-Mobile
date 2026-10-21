@@ -207,7 +207,16 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
   @override
   void didUpdateWidget(MonitorRouteView old) {
     super.didUpdateWidget(old);
-    if (old.active != widget.active) _syncTracking();
+    if (old.active != widget.active) {
+      // The native map exists only while this tab is on screen (see _mapView): leaving the tab removes it, so
+      // its camera and "ready" state go with it and a fresh map is fitted again when the monitor comes back.
+      if (!widget.active && _googleOn) {
+        _gcam = null;
+        _mapReady = false;
+        _fitted = false;
+      }
+      _syncTracking();
+    }
   }
 
   @override
@@ -999,8 +1008,15 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
       }
     }
     return Stack(children: [
-      if (_googleOn)
+      // THE NATIVE MAP ONLY WHILE THIS TAB IS ON SCREEN. The monitor dashboard keeps its tabs in an IndexedStack,
+      // which builds every tab at once - so this map (MapLibre or the official Google map, both native views)
+      // used to be created hidden behind the Home tab the moment a monitor with a shift signed in. A native map
+      // made and never shown has no real drawing surface, and on iPhones that is what closed the app right after
+      // sign-in. Now it is made when the Shift tab opens and removed when the monitor leaves it.
+      if (_googleOn && widget.active)
         _googleMap(w, stops, next, center)
+      else if (_googleOn)
+        const ColoredBox(color: Color(0xFFE8EDF3), child: SizedBox.expand())
       else
       FlutterMap(
         mapController: _map,

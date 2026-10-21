@@ -36,7 +36,12 @@ class PhoneLocation {
   bool _asked = false; // the permission prompt once per app run, not every 20 s
   bool _uploading = false;
 
-  bool get running => _gps != null || _starting;
+  // One start at a time. On an iPhone the permission prompt makes the app "inactive" for a moment; a second start
+  // used to begin while the first was still waiting on that prompt, so two permission requests and two GPS streams
+  // ran at once.
+  Future<void>? _startJob;
+
+  bool get running => _gps != null || _startJob != null;
 
   /// The latest raw phone fix when it is less than 15 s old - for the GPS stamp on attendance.
   Position? get recentFix {
@@ -66,7 +71,11 @@ class PhoneLocation {
     }
   }
 
-  Future<void> _start() async {
+  void _start() {
+    _startJob ??= _doStart().whenComplete(() => _startJob = null);
+  }
+
+  Future<void> _doStart() async {
     _starting = true;
     try {
       if (!await Geolocator.isLocationServiceEnabled()) return;
@@ -77,6 +86,7 @@ class PhoneLocation {
       }
       if (perm == LocationPermission.denied || perm == LocationPermission.deniedForever) return;
       if (!_starting) return; // stopped while asking
+      await _gps?.cancel();
       _gps = Geolocator.getPositionStream(locationSettings: _settings()).listen(_onFix, onError: (Object e) => debugPrint('Phone location: $e'));
     } catch (e) {
       debugPrint('Phone location unavailable: $e');

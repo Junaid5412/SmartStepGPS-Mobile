@@ -50,6 +50,13 @@ class PillStyle {
   String get key => 'pill|$text|${color.toARGB32()}|${dot?.toARGB32()}';
 }
 
+/// A position a native map can be given. NaN or infinite numbers (a failed calculation), a latitude past the poles,
+/// or the 0,0 "no position" placeholder go to the iPhone's map SDK as they are and can bring the app down; they
+/// are left off the map instead.
+bool okLatLng(LatLng p) =>
+    p.latitude.isFinite && p.longitude.isFinite && p.latitude.abs() <= 85 && p.longitude.abs() <= 180 &&
+    !(p.latitude.abs() < 0.0001 && p.longitude.abs() < 0.0001);
+
 /// One fixed pin on the map.
 @immutable
 class GPin {

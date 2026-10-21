@@ -63,11 +63,15 @@ class _MonitorDashboardState extends State<MonitorDashboard> with WidgetsBinding
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    _onScreen = state == AppLifecycleState.resumed;
-    if (_onScreen) {
+    if (state == AppLifecycleState.resumed) {
+      _onScreen = true;
       if (_store.loaded) PhoneLocation.instance.sync(_store);
       _store.load(silent: true); // fresh roster after being away
-    } else {
+    } else if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden || state == AppLifecycleState.detached) {
+      // Really gone from the screen. Not "inactive": that is only a system prompt or the notification
+      // shade over the app (on an iPhone the location permission prompt itself) - stopping then cut the
+      // GPS off in the middle of asking for it.
+      _onScreen = false;
       PhoneLocation.instance.stop();
     }
   }

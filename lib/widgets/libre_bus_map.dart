@@ -32,11 +32,13 @@ class LibreMapCam implements BusMapCam {
 
   @override
   void move(LatLng p, [double? zoom]) {
+    if (!okLatLng(p)) return;
     _c.moveCamera(ml.CameraUpdate.newCameraPosition(ml.CameraPosition(target: l(p), zoom: zoom ?? this.zoom, bearing: bearing)));
   }
 
   @override
   void animateTo(LatLng p, [double? zoom]) {
+    if (!okLatLng(p)) return;
     _c.animateCamera(ml.CameraUpdate.newCameraPosition(ml.CameraPosition(target: l(p), zoom: zoom ?? this.zoom, bearing: bearing)),
         duration: const Duration(milliseconds: 600));
   }
@@ -46,6 +48,7 @@ class LibreMapCam implements BusMapCam {
 
   @override
   void fit(List<LatLng> pts, {double padding = 48, double maxZoom = 17}) {
+    pts = pts.where(okLatLng).toList();
     if (pts.isEmpty) return;
     if (pts.length == 1) {
       animateTo(pts.first, math.min(15, maxZoom));
@@ -81,6 +84,7 @@ class LibreMapCam implements BusMapCam {
 
   @override
   void moveNorth(LatLng p, double minZoom) {
+    if (!okLatLng(p)) return;
     _c.animateCamera(ml.CameraUpdate.newCameraPosition(ml.CameraPosition(target: l(p), zoom: math.max(zoom, minZoom), bearing: 0)),
         duration: const Duration(milliseconds: 600));
   }
@@ -222,6 +226,7 @@ class _LibreBusMapState extends State<LibreBusMap> {
     final sig = <String, String>{};
 
     for (final p in widget.pins) {
+      if (!okLatLng(p.pos)) continue;
       final img = await _image(p.style.key, () => PinIcons.pinPng(p.style));
       final size = PinIcons.sizeFor(p.style);
       final dy = (0.5 - PinIcons.anchorFor(p.style).dy) * size.height;   // badge centre onto the point
@@ -238,7 +243,7 @@ class _LibreBusMapState extends State<LibreBusMap> {
 
     final pos = widget.bus?.value;
     final look = widget.busLook?.call();
-    if (pos != null && look != null) {
+    if (pos != null && okLatLng(pos) && look != null) {
       final body = await _image(look.body.key, () => PinIcons.pinPng(look.body));
       // The icon turns with the screen, so a heading on the map is the heading less the map's own turn.
       final rot = look.rotate ? ((look.heading - _bearing) % 360) : 0.0;
@@ -272,14 +277,14 @@ class _LibreBusMapState extends State<LibreBusMap> {
     }
 
     // Lines: redrawn only when the points or the colour change.
-    final wantLines = {for (final l in widget.lines) if (l.points.length > 1) l.id: l};
+    final wantLines = {for (final l in widget.lines) if (l.points.where(okLatLng).length > 1) l.id: l};
     for (final l in wantLines.values) {
       final s = '${l.points.length}|${l.points.first.latitude},${l.points.first.longitude}|${l.points.last.latitude},${l.points.last.longitude}|${l.color.toARGB32()}|${l.width}';
       if (_lineSig[l.id] == s) continue;
       for (final old in _lines.remove(l.id) ?? const <ml.Line>[]) {
         await c.removeLine(old);
       }
-      final pts = [for (final p in l.points) LibreMapCam.l(p)];
+      final pts = [for (final p in l.points) if (okLatLng(p)) LibreMapCam.l(p)];
       final edge = await c.addLine(ml.LineOptions(geometry: pts, lineColor: '#FFFFFF', lineWidth: l.width + 4.0, lineJoin: 'round'));
       final main = await c.addLine(ml.LineOptions(geometry: pts, lineColor: _hex(l.color), lineOpacity: l.color.a, lineWidth: l.width.toDouble(), lineJoin: 'round'));
       _lines[l.id] = [edge, main];

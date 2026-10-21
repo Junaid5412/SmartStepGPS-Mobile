@@ -28,11 +28,13 @@ class GoogleMapCam implements BusMapCam {
 
   @override
   void move(LatLng p, [double? zoom]) {
+    if (!okLatLng(p)) return;
     _c.moveCamera(gm.CameraUpdate.newCameraPosition(gm.CameraPosition(target: g(p), zoom: zoom ?? _pos.zoom, bearing: _pos.bearing)));
   }
 
   @override
   void animateTo(LatLng p, [double? zoom]) {
+    if (!okLatLng(p)) return;
     _c.animateCamera(gm.CameraUpdate.newCameraPosition(gm.CameraPosition(target: g(p), zoom: zoom ?? _pos.zoom, bearing: _pos.bearing)));
   }
 
@@ -41,6 +43,7 @@ class GoogleMapCam implements BusMapCam {
 
   @override
   void fit(List<LatLng> pts, {double padding = 48, double maxZoom = 17}) {
+    pts = pts.where(okLatLng).toList();
     if (pts.isEmpty) return;
     if (pts.length == 1) {
       animateTo(pts.first, math.min(15, maxZoom));
@@ -68,6 +71,7 @@ class GoogleMapCam implements BusMapCam {
 
   @override
   void moveNorth(LatLng p, double minZoom) {
+    if (!okLatLng(p)) return;
     _c.animateCamera(gm.CameraUpdate.newCameraPosition(gm.CameraPosition(target: g(p), zoom: math.max(_pos.zoom, minZoom), bearing: 0)));
   }
 
@@ -161,6 +165,7 @@ class _GoogleBusMapState extends State<GoogleBusMap> {
   Set<gm.Marker> _markers() {
     final out = <gm.Marker>{};
     for (final p in widget.pins) {
+      if (!okLatLng(p.pos)) continue;
       final ic = _icon(p.style.key, () => PinIcons.pinPng(p.style));
       if (ic == null) continue;
       out.add(gm.Marker(
@@ -175,7 +180,7 @@ class _GoogleBusMapState extends State<GoogleBusMap> {
     }
     final pos = widget.bus?.value;
     final look = widget.busLook?.call();
-    if (pos != null && look != null) {
+    if (pos != null && okLatLng(pos) && look != null) {
       final body = _icon(look.body.key, () => PinIcons.pinPng(look.body));
       if (body != null) {
         out.add(gm.Marker(
@@ -209,8 +214,8 @@ class _GoogleBusMapState extends State<GoogleBusMap> {
   Set<gm.Polyline> _polylines() {
     final out = <gm.Polyline>{};
     for (final l in widget.lines) {
-      if (l.points.length < 2) continue;
-      final pts = [for (final p in l.points) GoogleMapCam.g(p)];
+      final pts = [for (final p in l.points) if (okLatLng(p)) GoogleMapCam.g(p)];
+      if (pts.length < 2) continue;
       out.add(gm.Polyline(polylineId: gm.PolylineId('${l.id}_edge'), points: pts, color: Colors.white, width: l.width + 4,
           jointType: gm.JointType.round, startCap: gm.Cap.roundCap, endCap: gm.Cap.roundCap, zIndex: 1));
       out.add(gm.Polyline(polylineId: gm.PolylineId(l.id), points: pts, color: l.color, width: l.width,
