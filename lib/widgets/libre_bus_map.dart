@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 
+import '../services/map_config.dart' show NativeMapGuard;
 import 'bus_map_common.dart';
 
 /// The free map: OpenFreeMap's OpenStreetMap styles drawn by MapLibre, natively on the phone's graphics chip
@@ -139,6 +140,7 @@ class _LibreBusMapState extends State<LibreBusMap> {
   @override
   void initState() {
     super.initState();
+    NativeMapGuard.opening('maplibre');
     widget.bus?.addListener(_busMoved);
   }
 
@@ -313,6 +315,7 @@ class _LibreBusMapState extends State<LibreBusMap> {
           _cam = LibreMapCam._(c, widget.padding);
         },
         onStyleLoadedCallback: () async {
+          NativeMapGuard.opened();   // the native map is up
           final c = _c;
           if (c == null || !mounted) return;
           // A (re)loaded style starts empty: pictures, symbols and lines are added again.

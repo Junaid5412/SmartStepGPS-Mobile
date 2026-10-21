@@ -2,14 +2,29 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'screens/splash_screen.dart';
 import 'services/api_service.dart';
+import 'services/app_errors.dart';
 import 'services/map_config.dart';
 import 'widgets/bottom_strip.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await ApiService.initBaseUrl();
+  // First: every error from here on is caught, reported to the portal (App Errors) and does not close the app.
+  AppErrors.install();
+  // Nothing before runApp may stop the app from starting: each step gives up after a few seconds and on any
+  // error, and the app starts with its defaults.
+  try {
+    await ApiService.initBaseUrl().timeout(const Duration(seconds: 3));
+  } catch (e, st) {
+    AppErrors.report(e, st, kind: 'startup');
+  }
   // The map chosen on the portal, as last seen on this phone: the first map drawn is already the right one.
-  await MapConfig.instance.restore();
+  try {
+    await MapConfig.instance.restore().timeout(const Duration(seconds: 3));
+  } catch (e, st) {
+    AppErrors.report(e, st, kind: 'startup');
+  }
+  // Did a native map take the app down last time? Then the built-in map is used (see NativeMapGuard).
+  await NativeMapGuard.check().timeout(const Duration(seconds: 3), onTimeout: () {});
   // Edge-to-edge (MainActivity turns it on): the app draws behind the status and navigation bars.
   // No bar COLOURS are set here - Android 15 ignores them and Google Play flags the calls - only the
   // icon brightness: light icons over the dark headers, dark ones over the light bottom strip.

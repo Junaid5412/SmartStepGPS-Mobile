@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -6,12 +7,65 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vector_map_tiles/vector_map_tiles.dart';
 
 import 'api_service.dart';
+import 'app_errors.dart';
 import 'offline_map.dart';
 
 /// True when this build carries a Google Maps API key (CI passes --dart-define=GMAPS_KEY_PRESENT=true when the
 /// GOOGLE_MAPS_API_KEY secret is set). Without a key the official Google map cannot work - on iOS it would
 /// even stop the app - so "Google Maps - official" then falls back to the online Google picture tiles.
 const bool kGoogleMapsKey = bool.fromEnvironment('GMAPS_KEY_PRESENT');
+
+/// NATIVE MAP CRASH GUARD.
+///
+/// The Google and MapLibre maps are native components: if one of them crashes, it takes the whole app down
+/// with it - nothing in Dart can catch that - and a signed-in parent, whose first screen is the map, would be
+/// thrown out again on every start. So the app notes when it starts opening a native map and clears the note
+/// once the map has loaded (or after 10 s). A note still there at the next start means the app died while the
+/// map opened: for this app version, on this phone, the built-in map is used instead (it cannot crash that
+/// way), and the crash is reported (App Errors on the portal) so the cause can be fixed. A new app version tries
+/// the native map again.
+class NativeMapGuard {
+  NativeMapGuard._();
+  static const _openingKey = 'native_map_opening';   // "<kind>|<app version>" while a native map is opening
+  static const _blockedKey = 'native_map_blocked';   // the app version native maps were turned off for
+  static bool blocked = false;
+  static Timer? _timer;
+  static SharedPreferences? _prefs;
+
+  /// Once at start, before the first map.
+  static Future<void> check() async {
+    try {
+      final p = _prefs = await SharedPreferences.getInstance();
+      if (p.getString(_blockedKey) == kAppVersion) blocked = true;
+      final v = p.getString(_openingKey);
+      if (v == null) return;
+      await p.remove(_openingKey);
+      final parts = v.split('|');
+      if (parts.length == 2 && parts[1] == kAppVersion) {
+        blocked = true;
+        await p.setString(_blockedKey, kAppVersion);
+        AppErrors.report('The app closed while the ${parts[0]} map was opening. This phone now uses the built-in map for app $kAppVersion.',
+            null, kind: 'native_map_crash');
+      }
+    } catch (_) {}
+  }
+
+  static void opening(String kind) {
+    try {
+      _prefs?.setString(_openingKey, '$kind|$kAppVersion');
+    } catch (_) {}
+    _timer?.cancel();
+    _timer = Timer(const Duration(seconds: 10), opened);
+  }
+
+  static void opened() {
+    _timer?.cancel();
+    _timer = null;
+    try {
+      _prefs?.remove(_openingKey);
+    } catch (_) {}
+  }
+}
 
 /// One base map the apps can draw. Chosen on the portal (App Module Settings -> Map in the apps) and sent
 /// with the module switches (api/mobile/modules.php).
@@ -43,16 +97,17 @@ class MapSource {
     attribution: 'OpenFreeMap © OpenMapTiles Data from OpenStreetMap',
   );
 
-  bool get isOffline => !isGoogleSdk && !isLibre && (type == 'offline' || url.isEmpty);
+  // OpenFreeMap while native maps are turned off on this phone (NativeMapGuard): the built-in offline map instead.
+  bool get isOffline => !isGoogleSdk && !isLibre && (type == 'offline' || url.isEmpty || type.startsWith('openfreemap'));
 
   /// OpenFreeMap: a vector map style drawn natively by MapLibre ([url] is the style address).
-  bool get isLibre => type.startsWith('openfreemap') && url.startsWith('https://');
+  bool get isLibre => !NativeMapGuard.blocked && type.startsWith('openfreemap') && url.startsWith('https://');
 
   /// Drawn by a native map component (Google or MapLibre) rather than flutter_map.
   bool get isNative => isGoogleSdk || isLibre;
 
   /// The official Google Maps component (needs the key in this build; otherwise [url] - Google's tiles - is used).
-  bool get isGoogleSdk => kGoogleMapsKey && type.startsWith('google_sdk');
+  bool get isGoogleSdk => kGoogleMapsKey && !NativeMapGuard.blocked && type.startsWith('google_sdk');
 
   /// Satellite photos with names (official Google map).
   bool get googleHybrid => type == 'google_sdk_hybrid';

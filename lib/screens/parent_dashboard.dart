@@ -15,6 +15,7 @@ import 'parent_profile_screen.dart';
 import 'terms_screen.dart';
 import 'privacy_screen.dart';
 import 'about_screen.dart';
+import '../services/app_errors.dart';
 
 class ParentDashboard extends StatefulWidget {
   const ParentDashboard({Key? key}) : super(key: key);
@@ -41,6 +42,7 @@ class _ParentDashboardState extends State<ParentDashboard> with WidgetsBindingOb
   @override
   void initState() {
     super.initState();
+    AppErrors.screen = 'parent_dashboard';
     WidgetsBinding.instance.addObserver(this);
     _pageController = PageController(viewportFraction: 0.93);
     _startBannerTimer();

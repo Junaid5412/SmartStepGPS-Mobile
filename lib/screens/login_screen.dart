@@ -11,6 +11,7 @@ import 'terms_screen.dart';
 import 'privacy_screen.dart';
 import '../widgets/custom_loading.dart';
 import '../widgets/bottom_strip.dart';
+import '../services/app_errors.dart';
 
 /// Sign-in: a light screen with the company logo up top, the form in the middle, and a navy hill at the
 /// bottom carrying the yellow Sign in button (2026-10 redesign). The background is a quiet morning school
@@ -50,6 +51,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
   @override
   void initState() {
     super.initState();
+    AppErrors.screen = 'login';
     bottomStripColor.value = _navy;          // the strip under the navigation bar continues the navy hill
     _animController.forward();
     _driveController.forward();

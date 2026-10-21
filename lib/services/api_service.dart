@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'app_errors.dart';
 
 class ApiService {
   static const String defaultBaseUrl = 'https://smartstepgps.cloud/api/mobile';
@@ -10,27 +11,67 @@ class ApiService {
 
   static const _secureStorage = FlutterSecureStorage();
 
+  // THE KEYCHAIN CAN REFUSE. On an iPhone, reading the Keychain throws (errSecInteractionNotAllowed) while the
+  // phone is locked - and iOS starts ("pre-warms") apps in the background before the user unlocks and taps -
+  // and it can throw after a reinstall or a restore. getToken() used to let that exception escape, so the splash
+  // stopped where it was and the app never started. Now a read that fails is tried again a few times over a
+  // couple of seconds (the phone is usually unlocked by then), and if the Keychain still refuses, the app goes on
+  // as signed out rather than not at all. Every failure is reported (App Errors on the portal).
+  static Future<String?> _secureRead(String key) async {
+    for (var attempt = 0; ; attempt++) {
+      try {
+        return await _secureStorage.read(key: key).timeout(const Duration(seconds: 3));
+      } catch (e, st) {
+        if (attempt >= 3) {
+          AppErrors.report(e, st, kind: 'keychain_read');
+          return null;
+        }
+        await Future.delayed(Duration(milliseconds: 400 * (attempt + 1)));
+      }
+    }
+  }
+
   static Future<String> getToken() async {
-    String? token = await _secureStorage.read(key: 'api_token');
+    String? token = await _secureRead('api_token');
     if (token != null && token.isNotEmpty) return token;
 
-    // Fallback/Migration from SharedPreferences
-    final prefs = await SharedPreferences.getInstance();
-    token = prefs.getString('api_token');
-    if (token != null && token.isNotEmpty) {
-      await _secureStorage.write(key: 'api_token', value: token);
-      await prefs.remove('api_token');
-      return token;
+    // Fallback/Migration from SharedPreferences (also where the token is kept if the Keychain refused to store it)
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      token = prefs.getString('api_token');
+      if (token != null && token.isNotEmpty) {
+        try {
+          await _secureStorage.write(key: 'api_token', value: token);
+          await prefs.remove('api_token');
+        } catch (_) {/* stays in prefs until the Keychain accepts it */}
+        return token;
+      }
+    } catch (e, st) {
+      AppErrors.report(e, st, kind: 'prefs_read');
     }
     return '';
   }
 
   static Future<void> setToken(String token) async {
-    await _secureStorage.write(key: 'api_token', value: token);
+    try {
+      await _secureStorage.write(key: 'api_token', value: token);
+    } catch (e, st) {
+      // The Keychain refused (see above): keep the sign-in working rather than failing it, and say so.
+      AppErrors.report(e, st, kind: 'keychain_write');
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('api_token', token);
+    }
   }
 
   static Future<void> clearToken() async {
-    await _secureStorage.delete(key: 'api_token');
+    try {
+      await _secureStorage.delete(key: 'api_token');
+    } catch (e, st) {
+      AppErrors.report(e, st, kind: 'keychain_delete');
+    }
+    try {
+      (await SharedPreferences.getInstance()).remove('api_token');
+    } catch (_) {}
   }
 
   /// Only an https URL on a host we own may replace the base URL.

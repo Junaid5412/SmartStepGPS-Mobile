@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
+import '../services/app_errors.dart';
 import '../widgets/bottom_strip.dart';
 import 'login_screen.dart';
 import 'parent_dashboard.dart';
@@ -42,18 +43,46 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
   String? _name;      // null until decided - nothing is drawn under the logo before that
   String _tagline = 'Safe & Smart School Transport';
 
+  Timer? _watchdog;
+  bool _left = false;
+
   @override
   void initState() {
     super.initState();
+    AppErrors.screen = 'splash';
     bottomStripColor.value = _bg;            // no white band under the navigation bar while the splash is up
-    _initializeApp();
+    // The splash can never be where the app stops: whatever goes wrong below, after 12 s it moves on to sign-in.
+    _watchdog = Timer(const Duration(seconds: 12), () {
+      if (!_left) {
+        AppErrors.report('Splash watchdog: start-up did not finish in 12 s', StackTrace.current, kind: 'startup');
+        _go(const LoginScreen());
+      }
+    });
+    _initializeApp().catchError((Object e, StackTrace st) {
+      AppErrors.report(e, st, kind: 'startup');
+      _go(const LoginScreen());
+    });
   }
 
   @override
   void dispose() {
+    _watchdog?.cancel();
     bottomStripColor.value = Colors.white;
     _anim.dispose();
     super.dispose();
+  }
+
+  void _go(Widget destination) {
+    if (_left || !mounted) return;
+    _left = true;
+    _watchdog?.cancel();
+    Navigator.of(context).pushReplacement(
+      PageRouteBuilder(
+        transitionDuration: const Duration(milliseconds: 500),
+        pageBuilder: (_, __, ___) => destination,
+        transitionsBuilder: (_, animation, __, child) => FadeTransition(opacity: animation, child: child),
+      ),
+    );
   }
 
   void _show(String name, String? tagline) {
@@ -114,14 +143,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
     }
 
     // Reading the token can be slow on a cold start, and the user can background the app in that window.
-    if (!mounted) return;
-    Navigator.of(context).pushReplacement(
-      PageRouteBuilder(
-        transitionDuration: const Duration(milliseconds: 500),
-        pageBuilder: (_, __, ___) => destination,
-        transitionsBuilder: (_, animation, __, child) => FadeTransition(opacity: animation, child: child),
-      ),
-    );
+    _go(destination);
   }
 
   @override

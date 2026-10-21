@@ -7,6 +7,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart' as gm;
 import 'package:latlong2/latlong.dart';
 
 import 'bus_map_common.dart';
+import '../services/map_config.dart' show NativeMapGuard;
 
 /// The official Google Maps view (App Module Settings -> "Google Maps - official"; the app must be built with a
 /// Google Maps API key). Pins, bus and line come from [bus_map_common.dart].
@@ -115,6 +116,7 @@ class _GoogleBusMapState extends State<GoogleBusMap> {
   @override
   void initState() {
     super.initState();
+    NativeMapGuard.opening('google');
     widget.bus?.addListener(_busMoved);
   }
 
@@ -238,6 +240,7 @@ class _GoogleBusMapState extends State<GoogleBusMap> {
         trafficEnabled: false,
         minMaxZoomPreference: const gm.MinMaxZoomPreference(6, 20),
         onMapCreated: (c) {
+          NativeMapGuard.opened();   // the native map is up
           final cam = GoogleMapCam._(c, gm.CameraPosition(target: GoogleMapCam.g(widget.initialCenter), zoom: widget.initialZoom));
           _cam = cam;
           widget.onReady?.call(cam);

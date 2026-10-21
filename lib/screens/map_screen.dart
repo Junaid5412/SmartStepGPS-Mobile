@@ -15,6 +15,7 @@ import '../widgets/google_bus_map.dart';
 import '../widgets/libre_bus_map.dart';
 import '../widgets/custom_loading.dart';
 import '../widgets/module_gate.dart';
+import '../services/app_errors.dart';
 
 class MapScreen extends StatefulWidget {
   final Map<String, dynamic> student;
@@ -167,6 +168,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
   @override
   void initState() {
     super.initState();
+    AppErrors.screen = 'parent_map';
     // Which map to draw (App Module Settings on the portal): the saved choice at once, then the current one.
     MapConfig.instance.addListener(_onMapSource);
     MapConfig.instance.refresh().whenComplete(_kickMap);

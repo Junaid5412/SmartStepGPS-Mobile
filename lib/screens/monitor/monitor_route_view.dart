@@ -18,6 +18,7 @@ import 'monitor_store.dart';
 import 'monitor_widgets.dart';
 import 'phone_location.dart';
 import 'route_planner.dart';
+import '../../services/app_errors.dart';
 
 /// The Shift tab - the ONE place attendance is marked. While a shift is open it shows the stops in
 /// the best order, either on a live MAP or as a LIST (a switch at the top, remembered per phone);
@@ -191,6 +192,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
   @override
   void initState() {
     super.initState();
+    AppErrors.screen = 'monitor_route';
     _glide = AnimationController(vsync: this, duration: const Duration(milliseconds: 950))..addListener(_onGlide);
     // Which map to draw (App Module Settings on the portal).
     MapConfig.instance.addListener(_onMapSource);

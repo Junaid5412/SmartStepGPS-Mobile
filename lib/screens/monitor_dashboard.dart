@@ -14,6 +14,7 @@ import 'monitor/monitor_route_view.dart';
 import 'monitor/monitor_store.dart';
 import 'monitor/phone_location.dart';
 import 'terms_screen.dart';
+import '../services/app_errors.dart';
 
 /// The bus monitor's app: Home (today at a glance), Attendance (one shift at a time, unlocked only
 /// during that shift), Notices and Profile. Phones get a bottom bar; tablets and landscape a side rail.
@@ -36,6 +37,7 @@ class _MonitorDashboardState extends State<MonitorDashboard> with WidgetsBinding
   @override
   void initState() {
     super.initState();
+    AppErrors.screen = 'monitor_dashboard';
     WidgetsBinding.instance.addObserver(this);
     _store.addListener(_onStore);
     SharedPreferences.getInstance().then((p) {
