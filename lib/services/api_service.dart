@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -6,6 +7,12 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'app_errors.dart';
 
 class ApiService {
+  /// Sent with every request: which phone system and app version (App Usage on the portal shows them).
+  static final Map<String, String> _app = {
+    'X-App-Platform': Platform.isIOS ? 'ios' : Platform.isAndroid ? 'android' : Platform.operatingSystem,
+    'X-App-Version': kAppVersion,
+  };
+
   static const String defaultBaseUrl = 'https://smartstepgps.cloud/api/mobile';
   static String baseUrl = defaultBaseUrl;
 
@@ -141,7 +148,7 @@ class ApiService {
   static Future<Map<String, dynamic>> login(String username, String password, String fcmToken) async {
     final response = await http.post(
       Uri.parse('$baseUrl/login.php'),
-      headers: {'Content-Type': 'application/json'},
+      headers: {..._app, 'Content-Type': 'application/json'},
       body: jsonEncode({
         'username': username,
         'password': password,
@@ -157,7 +164,7 @@ class ApiService {
     final token = await getToken();
     final response = await http.get(
       Uri.parse('$baseUrl/settings.php'),
-      headers: {if (token.isNotEmpty) 'Authorization': 'Bearer $token'},
+      headers: {..._app, if (token.isNotEmpty) 'Authorization': 'Bearer $token'},
     );
     if (response.statusCode == 200) {
       return _safeDecode(response.body);
@@ -172,7 +179,7 @@ class ApiService {
     if (token.isEmpty) return {'success': false};
     final response = await http.get(
       Uri.parse('$baseUrl/modules.php'),
-      headers: {'Authorization': 'Bearer $token'},
+      headers: {..._app, 'Authorization': 'Bearer $token'},
     ).timeout(const Duration(seconds: 8));
     if (response.statusCode == 200) {
       return _safeDecode(response.body);
@@ -184,7 +191,7 @@ class ApiService {
     final token = await getToken();
     final response = await http.get(
       Uri.parse('$baseUrl/parent_students.php'),
-      headers: {'Authorization': 'Bearer $token'},
+      headers: {..._app, 'Authorization': 'Bearer $token'},
     );
     return _safeDecode(response.body);
   }
@@ -199,7 +206,7 @@ class ApiService {
     }
     final response = await http.get(
       Uri.parse(url),
-      headers: {'Authorization': 'Bearer $token'},
+      headers: {..._app, 'Authorization': 'Bearer $token'},
     );
     return _safeDecode(response.body);
   }
@@ -208,7 +215,7 @@ class ApiService {
     final token = await getToken();
     final response = await http.get(
       Uri.parse('$baseUrl/attendance_history.php?student_id=$studentId'),
-      headers: {'Authorization': 'Bearer $token'},
+      headers: {..._app, 'Authorization': 'Bearer $token'},
     );
     return _safeDecode(response.body);
   }
@@ -217,7 +224,7 @@ class ApiService {
     final token = await getToken();
     final response = await http.get(
       Uri.parse('$baseUrl/leave_request.php'),
-      headers: {'Authorization': 'Bearer $token'},
+      headers: {..._app, 'Authorization': 'Bearer $token'},
     );
     return _safeDecode(response.body);
   }
@@ -236,7 +243,7 @@ class ApiService {
     final token = await getToken();
     final response = await http.post(
       Uri.parse('$baseUrl/leave_request.php'),
-      headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+      headers: {..._app, 'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
       body: jsonEncode({
         'student_ids': studentIds,
         'date_from': dateFrom,
@@ -254,7 +261,7 @@ class ApiService {
     final token = await getToken();
     final response = await http.post(
       Uri.parse('$baseUrl/leave_request.php'),
-      headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+      headers: {..._app, 'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
       body: jsonEncode({'action': 'cancel', 'id': id}),
     );
     return _safeDecode(response.body);
@@ -264,7 +271,7 @@ class ApiService {
     final token = await getToken();
     final response = await http.get(
       Uri.parse('$baseUrl/announcements.php'),
-      headers: {'Authorization': 'Bearer $token'},
+      headers: {..._app, 'Authorization': 'Bearer $token'},
     );
     return _safeDecode(response.body);
   }
@@ -274,7 +281,7 @@ class ApiService {
 
     final response = await http.get(
       Uri.parse('$baseUrl/roster.php'),
-      headers: {
+      headers: {..._app, 
         'Authorization': 'Bearer $token',
       },
     );
@@ -292,7 +299,7 @@ class ApiService {
 
     final response = await http.post(
       Uri.parse('$baseUrl/attendance.php'),
-      headers: {
+      headers: {..._app, 
         'Authorization': 'Bearer $token',
         'Content-Type': 'application/json',
       },
@@ -314,7 +321,7 @@ class ApiService {
     final response = await http
         .post(
           Uri.parse('$baseUrl/monitor_location.php'),
-          headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+          headers: {..._app, 'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
           body: jsonEncode({'lat': lat, 'lng': lng, 'accuracy': accuracy, 'speed': speedKmh, 'heading': heading}),
         )
         .timeout(const Duration(seconds: 10));
@@ -325,7 +332,7 @@ class ApiService {
     final token = await getToken();
     final response = await http.get(
       Uri.parse('$baseUrl/profile.php'),
-      headers: {'Authorization': 'Bearer $token'},
+      headers: {..._app, 'Authorization': 'Bearer $token'},
     );
     return _safeDecode(response.body);
   }
@@ -345,7 +352,7 @@ class ApiService {
     final token = await getToken();
     final response = await http.post(
       Uri.parse('$baseUrl/profile.php'),
-      headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+      headers: {..._app, 'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
       body: jsonEncode({
         'action': 'update_profile',
         'father_name': fatherName,
@@ -370,7 +377,7 @@ class ApiService {
     final token = await getToken();
     final response = await http.post(
       Uri.parse('$baseUrl/delete_account.php'),
-      headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+      headers: {..._app, 'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
       body: jsonEncode({'reason': reason}),
     );
     return _safeDecode(response.body);
@@ -381,7 +388,7 @@ class ApiService {
     final token = await getToken();
     final response = await http.get(
       Uri.parse('$baseUrl/delete_account.php'),
-      headers: {'Authorization': 'Bearer $token'},
+      headers: {..._app, 'Authorization': 'Bearer $token'},
     );
     return _safeDecode(response.body);
   }
@@ -390,7 +397,7 @@ class ApiService {
     final token = await getToken();
     final response = await http.post(
       Uri.parse('$baseUrl/profile.php'),
-      headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+      headers: {..._app, 'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
       body: jsonEncode({
         'action': 'change_password',
         'old_password': oldPassword,
@@ -403,7 +410,7 @@ class ApiService {
   static Future<Map<String, dynamic>> requestPasswordOtp(String identifier) async {
     final response = await http.post(
       Uri.parse('$baseUrl/forgot_password.php'),
-      headers: {'Content-Type': 'application/json'},
+      headers: {..._app, 'Content-Type': 'application/json'},
       body: jsonEncode({
         'action': 'request_otp',
         'identifier': identifier,
@@ -415,7 +422,7 @@ class ApiService {
   static Future<Map<String, dynamic>> verifyPasswordReset(String email, String otp, String newPassword) async {
     final response = await http.post(
       Uri.parse('$baseUrl/forgot_password.php'),
-      headers: {'Content-Type': 'application/json'},
+      headers: {..._app, 'Content-Type': 'application/json'},
       body: jsonEncode({
         'action': 'verify_reset',
         'email': email,
