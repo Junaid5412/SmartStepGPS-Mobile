@@ -890,11 +890,8 @@ class _ParentDashboardState extends State<ParentDashboard> with WidgetsBindingOb
                 end: Alignment.bottomRight,
                 colors: [Color(0xFF0D47A1), Color(0xFF1976D2)],
               ),
-              image: DecorationImage(
-                image: AssetImage('assets/images/pattern.png'), // Optional subtle pattern if available
-                fit: BoxFit.cover,
-                opacity: 0.1,
-              ),
+              // (No background picture: it pointed at assets/images/pattern.png, which was never part of the app, and
+              // failed every time the menu opened - reported from phones by App Errors.)
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,

@@ -10,7 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'api_service.dart';
 
 /// The version shown in reports - keep in step with pubspec.yaml.
-const String kAppVersion = '1.2.12+35';
+const String kAppVersion = '1.2.13+36';
 
 /// Errors the app catches are reported to the portal (api/mobile/app_error.php -> App Errors page).
 ///

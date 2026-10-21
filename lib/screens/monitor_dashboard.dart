@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../services/api_service.dart';
+import '../services/module_watcher.dart';
 import '../widgets/custom_loading.dart';
 import 'about_screen.dart';
 import 'announcements_screen.dart';
@@ -45,6 +46,8 @@ class _MonitorDashboardState extends State<MonitorDashboard> with WidgetsBinding
       if (name != null && !_store.loaded) _store.staffName = name;
     });
     if (widget.store == null) _store.load();
+    // The school's App Module Settings (e.g. the "Children on the bus" list), kept current while signed in.
+    ModuleWatcher.instance.start();
   }
 
   @override
@@ -52,6 +55,7 @@ class _MonitorDashboardState extends State<MonitorDashboard> with WidgetsBinding
     WidgetsBinding.instance.removeObserver(this);
     _store.removeListener(_onStore);
     PhoneLocation.instance.stop();
+    ModuleWatcher.instance.stop();
     _store.dispose();
     super.dispose();
   }
@@ -67,6 +71,7 @@ class _MonitorDashboardState extends State<MonitorDashboard> with WidgetsBinding
       _onScreen = true;
       if (_store.loaded) PhoneLocation.instance.sync(_store);
       _store.load(silent: true); // fresh roster after being away
+      ModuleWatcher.instance.refresh();
     } else if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden || state == AppLifecycleState.detached) {
       // Really gone from the screen. Not "inactive": that is only a system prompt or the notification
       // shade over the app (on an iPhone the location permission prompt itself) - stopping then cut the

@@ -22,6 +22,7 @@ class ModuleWatcher extends ChangeNotifier {
     'announcements': true,
     'leave': true,
     'call_monitor': true,
+    'monitor_onbus': true,   // monitor app: the "Children on the bus" list on the Shift screen
   };
   Timer? _timer;
   bool _busy = false;

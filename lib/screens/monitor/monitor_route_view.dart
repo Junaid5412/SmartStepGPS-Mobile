@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../services/api_service.dart';
 import '../../services/map_config.dart';
+import '../../services/module_watcher.dart';
 import '../../widgets/bus_map_common.dart';
 import '../../widgets/google_bus_map.dart';
 import '../../widgets/libre_bus_map.dart';
@@ -201,7 +202,12 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
       if (mounted) setState(() => _listMode = p.getString(_prefMode) == 'list');
     });
     store.addListener(_onStore);
+    ModuleWatcher.instance.addListener(_onModules);
     _syncTracking();
+  }
+
+  void _onModules() {
+    if (mounted) setState(() {});
   }
 
   @override
@@ -221,6 +227,7 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
 
   @override
   void dispose() {
+    ModuleWatcher.instance.removeListener(_onModules);
     MapConfig.instance.removeListener(_onMapSource);
     store.removeListener(_onStore);
     _stopTracking();
@@ -965,10 +972,163 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
                  valueColor: const AlwaysStoppedAnimation(Colors.amberAccent),
                ),
              ),
+             _onBusButton(w),
             ]),
           ),
         ),
       );
+
+  // ------------------------------------------------------------------------------- children on the bus
+
+  /// Every child on the bus now, in the planned drop order (stop number), then by name.
+  List<(dynamic, int)> _onBusKids(ShiftWindow w) {
+    final homeKeys = _planKeys.where((k) => k != 'school').toList();
+    final out = <(dynamic, int)>[];
+    for (final f in store.families(w.key, Stage.onBus)) {
+      final n = homeKeys.indexOf(f.key);
+      for (final s in f.students) {
+        out.add((s, n < 0 ? 999 : n + 1));
+      }
+    }
+    out.sort((a, b) {
+      final c = a.$2.compareTo(b.$2);
+      return c != 0 ? c : '${a.$1['name'] ?? ''}'.compareTo('${b.$1['name'] ?? ''}');
+    });
+    return out;
+  }
+
+  /// "Children on the bus · 7" under the progress bar (App Module Settings -> "Children on the Bus list").
+  /// Opens one list of every child still on the bus, each with its own Dropped button, so children can be
+  /// dropped in whatever order the driver takes - not only stop by stop.
+  Widget _onBusButton(ShiftWindow w) {
+    if (!ModuleWatcher.instance.isOn('monitor_onbus')) return const SizedBox.shrink();
+    final n = store.counts(w.key).onBus;
+    if (n == 0) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 9),
+      child: Material(
+        color: Colors.white.withValues(alpha: 0.16),
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () => _openOnBus(w),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(children: [
+              const Icon(Icons.airline_seat_recline_normal_rounded, color: Colors.white, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text('Children on the bus · $n',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 13.5)),
+              ),
+              Text(w.isMorning ? 'Mark at school' : 'Drop in any order',
+                  style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w600)),
+              const SizedBox(width: 4),
+              const Icon(Icons.chevron_right_rounded, color: Colors.white, size: 20),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openOnBus(ShiftWindow w) {
+    final label = w.isMorning ? 'At school' : 'Dropped';
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+      builder: (sheet) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.62,
+        minChildSize: 0.35,
+        maxChildSize: 0.92,
+        builder: (ctx, scroll) => AnimatedBuilder(
+          // Live: a child marked here - or anywhere else - leaves the list at once.
+          animation: Listenable.merge([store, ModuleWatcher.instance]),
+          builder: (ctx, _) {
+            final kids = _onBusKids(w);
+            if (kids.isEmpty || !ModuleWatcher.instance.isOn('monitor_onbus')) {
+              return ListView(controller: scroll, padding: const EdgeInsets.fromLTRB(24, 8, 24, 32), children: [
+                const Icon(Icons.check_circle_rounded, color: MonitorColors.green, size: 46),
+                const SizedBox(height: 10),
+                Text(w.isMorning ? 'Nobody is on the bus.' : 'Every child has been dropped.',
+                    textAlign: TextAlign.center, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+              ]);
+            }
+            return ListView.separated(
+              controller: scroll,
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 28),
+              itemCount: kids.length + 1,
+              separatorBuilder: (_, i) => i == 0 ? const SizedBox(height: 4) : const Divider(height: 1),
+              itemBuilder: (ctx, i) {
+                if (i == 0) {
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text('Children on the bus (${kids.length})',
+                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+                      const SizedBox(height: 2),
+                      Text(
+                          w.isMorning
+                              ? 'Mark each child as they get off at school.'
+                              : 'Numbered in the planned order - mark whoever gets off, in any order.',
+                          style: TextStyle(fontSize: 12.5, color: Colors.grey.shade600)),
+                    ]),
+                  );
+                }
+                final (kid, stopNo) = kids[i - 1];
+                final name = '${kid['name'] ?? 'Student'}';
+                final grade = '${kid['grade'] ?? ''}'.trim();
+                final where = '${kid['address'] ?? ''}'.trim();
+                final sub = [if (grade.isNotEmpty) grade, if (where.isNotEmpty && !w.isMorning) where].join(' · ');
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 9),
+                  child: Row(children: [
+                    if (!w.isMorning)
+                      Container(
+                        width: 28,
+                        height: 28,
+                        alignment: Alignment.center,
+                        margin: const EdgeInsets.only(right: 10),
+                        decoration: BoxDecoration(color: w.color.withValues(alpha: 0.12), shape: BoxShape.circle),
+                        child: Text(stopNo >= 999 ? '-' : '$stopNo',
+                            style: TextStyle(color: w.color, fontWeight: FontWeight.w800, fontSize: 12.5)),
+                      ),
+                    Initials(name: name, size: 38, color: w.color),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text(name, maxLines: 1, overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+                        if (sub.isNotEmpty)
+                          Text(sub, maxLines: 1, overflow: TextOverflow.ellipsis,
+                              style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+                      ]),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton.icon(
+                      onPressed: () => MonitorActions(ctx, store).mark(w, kid, 'dropoff'),
+                      icon: const Icon(Icons.check_rounded, size: 17),
+                      label: Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: MonitorColors.green,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        minimumSize: const Size(0, 38),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(11)),
+                      ),
+                    ),
+                  ]),
+                );
+              },
+            );
+          },
+        ),
+      ),
+    );
+  }
 
   Widget _modeBtn(IconData i, String t, bool on, VoidCallback tap, ShiftWindow w) => InkWell(
         onTap: tap,
