@@ -980,29 +980,58 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
 
   // ------------------------------------------------------------------------------- children on the bus
 
-  /// Every child on the bus now, in the planned drop order (stop number), then by name.
-  List<(dynamic, int)> _onBusKids(ShiftWindow w) {
+  /// The children for the list button (App Module Settings -> "Children on the Bus list"; one switch for both
+  /// shifts):
+  ///   evening - every child ON the bus, in the planned drop order (stop number), then by name;
+  ///   morning - every child still TO PICK UP (not on leave), nearest to the bus first.
+  /// Each entry: the child, its stop number in the plan (999 = not planned), and metres from the bus (morning).
+  List<(dynamic, int, double?)> _listKids(ShiftWindow w) {
     final homeKeys = _planKeys.where((k) => k != 'school').toList();
-    final out = <(dynamic, int)>[];
-    for (final f in store.families(w.key, Stage.onBus)) {
+    final out = <(dynamic, int, double?)>[];
+    if (!w.isMorning) {
+      for (final f in store.families(w.key, Stage.onBus)) {
+        final n = homeKeys.indexOf(f.key);
+        for (final s in f.students) {
+          out.add((s, n < 0 ? 999 : n + 1, null));
+        }
+      }
+      out.sort((a, b) {
+        final c = a.$2.compareTo(b.$2);
+        return c != 0 ? c : '${a.$1['name'] ?? ''}'.compareTo('${b.$1['name'] ?? ''}');
+      });
+      return out;
+    }
+    final at = _best;
+    for (final f in store.families(w.key, Stage.waiting)) {
+      double? d;
+      if (at != null && f.hasCoords) {
+        d = RoutePlanner.meters(at, LatLng(double.parse('${f.stopLat}'), double.parse('${f.stopLng}')));
+      }
       final n = homeKeys.indexOf(f.key);
       for (final s in f.students) {
-        out.add((s, n < 0 ? 999 : n + 1));
+        if (_hasNotice(s, w.key)) continue;   // on leave: nothing to pick up
+        out.add((s, n < 0 ? 999 : n + 1, d));
       }
     }
     out.sort((a, b) {
+      final da = a.$3, db = b.$3;
+      if (da != null && db != null && da != db) return da.compareTo(db);
+      if (da != null && db == null) return -1;
+      if (da == null && db != null) return 1;
       final c = a.$2.compareTo(b.$2);
       return c != 0 ? c : '${a.$1['name'] ?? ''}'.compareTo('${b.$1['name'] ?? ''}');
     });
     return out;
   }
 
-  /// "Children on the bus · 7" under the progress bar (App Module Settings -> "Children on the Bus list").
-  /// Opens one list of every child still on the bus, each with its own Dropped button, so children can be
-  /// dropped in whatever order the driver takes - not only stop by stop.
+  static String _dist(double m) => m < 1000 ? '${(m / 10).round() * 10} m' : '${(m / 1000).toStringAsFixed(1)} km';
+
+  /// The list button under the progress bar: "Children on the bus · 7" in the evening, "Children to pick up · 5"
+  /// in the morning. Opens one list of those children, each with its own button, so they can be marked in
+  /// whatever order the bus goes - not only stop by stop.
   Widget _onBusButton(ShiftWindow w) {
     if (!ModuleWatcher.instance.isOn('monitor_onbus')) return const SizedBox.shrink();
-    final n = store.counts(w.key).onBus;
+    final n = w.isMorning ? _listKids(w).length : store.counts(w.key).onBus;
     if (n == 0) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(top: 9),
@@ -1015,13 +1044,13 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             child: Row(children: [
-              const Icon(Icons.airline_seat_recline_normal_rounded, color: Colors.white, size: 18),
+              Icon(w.isMorning ? Icons.hail_rounded : Icons.airline_seat_recline_normal_rounded, color: Colors.white, size: 18),
               const SizedBox(width: 8),
               Expanded(
-                child: Text('Children on the bus · $n',
+                child: Text(w.isMorning ? 'Children to pick up · $n' : 'Children on the bus · $n',
                     style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 13.5)),
               ),
-              Text(w.isMorning ? 'Mark at school' : 'Drop in any order',
+              Text(w.isMorning ? 'Nearest first' : 'Drop in any order',
                   style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w600)),
               const SizedBox(width: 4),
               const Icon(Icons.chevron_right_rounded, color: Colors.white, size: 20),
@@ -1033,7 +1062,12 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
   }
 
   void _openOnBus(ShiftWindow w) {
-    final label = w.isMorning ? 'At school' : 'Dropped';
+    final morning = w.isMorning;
+    final label = morning ? 'Picked up' : 'Dropped';
+    final type = morning ? 'pickup' : 'dropoff';
+    // Morning: re-sort by distance as the bus moves - every 4 s, not on every frame of the bus gliding.
+    final tick = ValueNotifier<int>(0);
+    final timer = morning ? Timer.periodic(const Duration(seconds: 4), (_) => tick.value++) : null;
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -1046,15 +1080,16 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
         minChildSize: 0.35,
         maxChildSize: 0.92,
         builder: (ctx, scroll) => AnimatedBuilder(
-          // Live: a child marked here - or anywhere else - leaves the list at once.
-          animation: Listenable.merge([store, ModuleWatcher.instance]),
+          // Live: a child marked here - or anywhere else - leaves the list at once; in the morning the order
+          // follows the bus.
+          animation: Listenable.merge([store, ModuleWatcher.instance, tick]),
           builder: (ctx, _) {
-            final kids = _onBusKids(w);
+            final kids = _listKids(w);
             if (kids.isEmpty || !ModuleWatcher.instance.isOn('monitor_onbus')) {
               return ListView(controller: scroll, padding: const EdgeInsets.fromLTRB(24, 8, 24, 32), children: [
                 const Icon(Icons.check_circle_rounded, color: MonitorColors.green, size: 46),
                 const SizedBox(height: 10),
-                Text(w.isMorning ? 'Nobody is on the bus.' : 'Every child has been dropped.',
+                Text(morning ? 'Everyone has been picked up.' : 'Every child has been dropped.',
                     textAlign: TextAlign.center, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
               ]);
             }
@@ -1068,35 +1103,36 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 6),
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text('Children on the bus (${kids.length})',
+                      Text(morning ? 'Children to pick up (${kids.length})' : 'Children on the bus (${kids.length})',
                           style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
                       const SizedBox(height: 2),
                       Text(
-                          w.isMorning
-                              ? 'Mark each child as they get off at school.'
+                          morning
+                              ? 'Nearest to the bus first - mark whoever gets on, in any order.'
                               : 'Numbered in the planned order - mark whoever gets off, in any order.',
                           style: TextStyle(fontSize: 12.5, color: Colors.grey.shade600)),
                     ]),
                   );
                 }
-                final (kid, stopNo) = kids[i - 1];
+                final (kid, stopNo, metres) = kids[i - 1];
                 final name = '${kid['name'] ?? 'Student'}';
                 final grade = '${kid['grade'] ?? ''}'.trim();
                 final where = '${kid['address'] ?? ''}'.trim();
-                final sub = [if (grade.isNotEmpty) grade, if (where.isNotEmpty && !w.isMorning) where].join(' · ');
+                final sub = [if (grade.isNotEmpty) grade, if (where.isNotEmpty) where].join(' · ');
+                // Evening: the stop number. Morning: how far the child's home is from the bus.
+                final badge = morning ? (metres == null ? '–' : _dist(metres)) : (stopNo >= 999 ? '-' : '$stopNo');
                 return Padding(
                   padding: const EdgeInsets.symmetric(vertical: 9),
                   child: Row(children: [
-                    if (!w.isMorning)
-                      Container(
-                        width: 28,
-                        height: 28,
-                        alignment: Alignment.center,
-                        margin: const EdgeInsets.only(right: 10),
-                        decoration: BoxDecoration(color: w.color.withValues(alpha: 0.12), shape: BoxShape.circle),
-                        child: Text(stopNo >= 999 ? '-' : '$stopNo',
-                            style: TextStyle(color: w.color, fontWeight: FontWeight.w800, fontSize: 12.5)),
-                      ),
+                    Container(
+                      constraints: BoxConstraints(minWidth: morning ? 52 : 28),
+                      height: 28,
+                      padding: EdgeInsets.symmetric(horizontal: morning ? 6 : 0),
+                      alignment: Alignment.center,
+                      margin: const EdgeInsets.only(right: 10),
+                      decoration: BoxDecoration(color: w.color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(14)),
+                      child: Text(badge, style: TextStyle(color: w.color, fontWeight: FontWeight.w800, fontSize: morning ? 11.5 : 12.5)),
+                    ),
                     Initials(name: name, size: 38, color: w.color),
                     const SizedBox(width: 10),
                     Expanded(
@@ -1110,11 +1146,11 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
                     ),
                     const SizedBox(width: 8),
                     FilledButton.icon(
-                      onPressed: () => MonitorActions(ctx, store).mark(w, kid, 'dropoff'),
+                      onPressed: () => MonitorActions(ctx, store).mark(w, kid, type),
                       icon: const Icon(Icons.check_rounded, size: 17),
                       label: Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
                       style: FilledButton.styleFrom(
-                        backgroundColor: MonitorColors.green,
+                        backgroundColor: morning ? w.color : MonitorColors.green,
                         padding: const EdgeInsets.symmetric(horizontal: 12),
                         minimumSize: const Size(0, 38),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(11)),
@@ -1127,7 +1163,10 @@ class _MonitorRouteViewState extends State<MonitorRouteView> with SingleTickerPr
           },
         ),
       ),
-    );
+    ).whenComplete(() {
+      timer?.cancel();
+      tick.dispose();
+    });
   }
 
   Widget _modeBtn(IconData i, String t, bool on, VoidCallback tap, ShiftWindow w) => InkWell(
