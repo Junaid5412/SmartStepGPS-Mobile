@@ -6,7 +6,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import '../services/api_service.dart';
 import '../services/map_config.dart';
@@ -141,7 +140,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
   LatLng? _schoolLocation;
   String _schoolName = 'School Campus';
 
-  LatLng? _parentLocation;
 
   // Road Routing
   List<LatLng> _roadPolyline = [];
@@ -173,7 +171,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
     MapConfig.instance.addListener(_onMapSource);
     MapConfig.instance.refresh().whenComplete(_kickMap);
     _parseInitialStudentData();
-    _fetchParentLocation();
+    // No location request here: parents are never asked for their location (their stop is already on the map).
+    // Only the bus monitor's app uses the phone's location (monitor/phone_location.dart, monitor_actions.dart).
     WidgetsBinding.instance.addObserver(this);
     _fetchLocation(full: true).whenComplete(_schedule);
   }
@@ -240,73 +239,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
       }
     }
     _homeAddress = s['pickup_point']?.toString() ?? s['pickup_address']?.toString() ?? 'Home Stop';
-  }
-
-  Future<void> _fetchParentLocation() async {
-    try {
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) return;
-
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        // Pre-permission notice. REJECTED by Apple on 23 Sep 2026 under guideline 5.1.1(iv) in its
-        // previous form, which offered "Deny" and "Allow" buttons. Two things were wrong with it:
-        //
-        //   1. A button labelled "Allow" makes the notice look like the permission decision itself,
-        //      so a user can believe they have already answered before iOS even asks.
-        //   2. "Deny" returned early and never reached Geolocator.requestPermission(), letting the
-        //      user postpone the system prompt indefinitely. Apple requires that the real prompt
-        //      always follows the notice - the decision belongs to the OS dialog, not to ours.
-        //
-        // So this is now purely informational: one button, worded "Continue", and no path that
-        // skips ahead. The user's actual choice happens in the iOS prompt immediately after, where
-        // declining is always available and is respected.
-        //
-        // PopScope(canPop: false) with barrierDismissible: false closes the last gap - the Android
-        // back button previously dismissed this dialog, which was the same "delay the request"
-        // behaviour Apple objected to.
-        await showDialog<void>(
-          context: context,
-          barrierDismissible: false,
-          builder: (ctx) => PopScope(
-            canPop: false,
-            child: AlertDialog(
-              title: const Text('About your location'),
-              content: const Text(
-                'Smart Step GPS shows where you are in relation to the school bus and the stop, so '
-                'you can see how far away the bus is.\n\n'
-                'Your location is used only while this screen is open. It stays on your device and '
-                'is never sent to our servers.',
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: const Text('Continue'),
-                ),
-              ],
-            ),
-          ),
-        );
-
-        if (!mounted) return;
-
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) return;
-      }
-      if (permission == LocationPermission.deniedForever) return;
-
-      final pos = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.medium,
-        timeLimit: const Duration(seconds: 5),
-      );
-      if (mounted) {
-        setState(() {
-          _parentLocation = LatLng(pos.latitude, pos.longitude);
-        });
-      }
-    } catch (e) {
-      debugPrint('Parent GPS fetch error: $e');
-    }
   }
 
   /// [full]: everything (route, crew, trip events). Otherwise - when a full answer is under 15 s old - only the
@@ -939,7 +871,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
     if (_busLocation != null) points.add(_busLocation!);
     if (_homeLocation != null) points.add(_homeLocation!);
     if (_schoolLocation != null) points.add(_schoolLocation!);
-    if (_parentLocation != null) points.add(_parentLocation!);
 
     if (points.isEmpty) return;
 
@@ -1079,19 +1010,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
                             ),
                           ),
 
-                        // 4. Parent's Own Location Marker
-                        if (_parentLocation != null && _on('me'))
-                          Marker(
-                            point: _parentLocation!,
-                            width: 55,
-                            height: 55,
-                            child: _buildMarkerItem(
-                              icon: Icons.person_pin_circle_rounded,
-                              iconColor: Colors.white,
-                              bgColor: const Color(0xFF0288D1),
-                              label: 'You',
-                            ),
-                          ),
                       ],
                     ),
 
@@ -1310,8 +1228,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin, Wi
         GPin(id: 'school', pos: _schoolLocation!, style: PinStyle(size: 34, color: const Color(0xFF4A148C), icon: Icons.school_rounded, label: _schoolName)),
       if (_homeLocation != null && _on('home'))
         GPin(id: 'home', pos: _homeLocation!, style: const PinStyle(size: 34, color: Color(0xFF2E7D32), icon: Icons.home_rounded, label: 'Your stop')),
-      if (_parentLocation != null && _on('me'))
-        GPin(id: 'me', pos: _parentLocation!, style: const PinStyle(size: 30, color: Color(0xFF0288D1), icon: Icons.person_pin_circle_rounded, label: 'You')),
     ];
     final src = MapConfig.instance.value;
     final center = _displayBusLocation ?? _busLocation ?? _homeLocation ?? _schoolLocation ?? const LatLng(25.2854, 51.5310);
