@@ -80,4 +80,8 @@ flutter {
 dependencies {
     // enableEdgeToEdge() in MainActivity.
     implementation("androidx.activity:activity-ktx:1.9.3")
+    // Push notifications (Push.kt): Google FCM only - no analytics, and no google-services plugin (see Push.kt).
+    implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
+    implementation("com.google.firebase:firebase-messaging")
+    implementation("androidx.core:core-ktx:1.13.1")
 }

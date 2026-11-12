@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Push notifications. Used by the signed build only when the provisioning profile has Push Notifications
+	     (.github/workflows/ios_build.yml checks); the App Store export turns "development" into "production". -->
+	<key>aps-environment</key>
+	<string>development</string>
+</dict>
+</plist>

@@ -16,6 +16,8 @@ import 'terms_screen.dart';
 import 'privacy_screen.dart';
 import 'about_screen.dart';
 import '../services/app_errors.dart';
+import '../services/push_service.dart';
+import 'notifications_screen.dart';
 
 class ParentDashboard extends StatefulWidget {
   const ParentDashboard({Key? key}) : super(key: key);
@@ -51,6 +53,9 @@ class _ParentDashboardState extends State<ParentDashboard> with WidgetsBindingOb
     // switched off on the portal leaves the dashboard - and any module screen that is open - almost at once.
     ModuleWatcher.instance.addListener(_syncModules);
     ModuleWatcher.instance.start();
+    // Notifications: the bell's count comes with the module poll; this phone registers for push (asks once).
+    PushService.instance.addListener(_syncNotifications);
+    PushService.instance.start();
     _loadProfile();
     _loadSettings();
     _fetchStudents();
@@ -63,6 +68,7 @@ class _ParentDashboardState extends State<ParentDashboard> with WidgetsBindingOb
     _settingsTimer?.cancel();
     ModuleWatcher.instance.removeListener(_syncModules);
     ModuleWatcher.instance.stop();
+    PushService.instance.removeListener(_syncNotifications);
     _pageController.dispose();
     super.dispose();
   }
@@ -145,6 +151,34 @@ class _ParentDashboardState extends State<ParentDashboard> with WidgetsBindingOb
     } catch (e) { debugPrint('Parent dashboard: profile load failed: $e'); }
   }
 
+  /// A notification arrived or was read: redraw the bell. When this phone is not registered for push (not set up on the
+  /// portal, or notifications not allowed) the new one is shown here as a banner instead.
+  void _syncNotifications() {
+    if (!mounted) return;
+    final b = PushService.instance.pendingBanner;
+    if (b != null) {
+      PushService.instance.pendingBanner = null;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 6),
+          backgroundColor: const Color(0xFF0D47A1),
+          content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('${b['title'] ?? ''}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5)),
+            const SizedBox(height: 2),
+            Text('${b['body'] ?? ''}', style: const TextStyle(fontSize: 13)),
+          ]),
+          action: SnackBarAction(label: 'VIEW', textColor: Colors.white, onPressed: _openNotifications),
+        ));
+    }
+    setState(() {});
+  }
+
+  void _openNotifications() {
+    Navigator.push(context, MaterialPageRoute(builder: (_) => const NotificationsScreen()));
+  }
+
   /// The module switches changed (the watcher polls every few seconds): redraw the cards.
   void _syncModules() {
     if (!mounted) return;
@@ -213,6 +247,8 @@ class _ParentDashboardState extends State<ParentDashboard> with WidgetsBindingOb
   }
 
   void _logout() async {
+    // First, while still signed in: this phone stops getting the family's notifications.
+    await PushService.instance.stop();
     final prefs = await SharedPreferences.getInstance();
     await prefs.clear();
     await ApiService.clearToken();
@@ -553,6 +589,29 @@ class _ParentDashboardState extends State<ParentDashboard> with WidgetsBindingOb
         ),
         centerTitle: false,
         actions: [
+          IconButton(
+            tooltip: 'Notifications',
+            onPressed: _openNotifications,
+            icon: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                const Icon(Icons.notifications_rounded, color: Colors.white),
+                if (PushService.instance.unread > 0)
+                  Positioned(
+                    right: -4,
+                    top: -4,
+                    child: Container(
+                      constraints: const BoxConstraints(minWidth: 17, minHeight: 17),
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      decoration: BoxDecoration(color: const Color(0xFFE53935), borderRadius: BorderRadius.circular(9), border: Border.all(color: const Color(0xFF1565C0), width: 1.5)),
+                      alignment: Alignment.center,
+                      child: Text(PushService.instance.unread > 99 ? '99+' : '${PushService.instance.unread}',
+                          style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800, height: 1.1)),
+                    ),
+                  ),
+              ],
+            ),
+          ),
           IconButton(
             tooltip: 'Refresh',
             icon: const Icon(Icons.refresh_rounded, color: Colors.white),

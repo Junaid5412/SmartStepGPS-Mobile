@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'api_service.dart';
 import 'map_config.dart';
+import 'push_service.dart';
 
 /// Keeps the school's app-module switches (App Module Settings on the portal) current while the parent
 /// app is open.
@@ -82,6 +83,9 @@ class ModuleWatcher extends ChangeNotifier {
       // The map chosen on the portal travels with the switches: an open map changes over within seconds.
       final mp = res['map'];
       if (mp is Map) MapConfig.instance.apply(mp);
+      // Parents: how many notifications are unread and the newest one's id - the bell updates within seconds.
+      final nf = res['notif'];
+      if (nf is Map) PushService.instance.applyPoll(nf);
     } catch (e) {
       debugPrint('ModuleWatcher: poll failed: $e');
     } finally {

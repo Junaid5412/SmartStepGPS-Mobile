@@ -187,6 +187,40 @@ class ApiService {
     return {'success': false};
   }
 
+  /// The family's notifications, newest first ([after]: only those newer than that id).
+  static Future<Map<String, dynamic>> getNotifications({int after = 0}) async {
+    final token = await getToken();
+    if (token.isEmpty) return {'success': false};
+    final response = await http.get(
+      Uri.parse('$baseUrl/notifications.php${after > 0 ? '?after=$after' : ''}'),
+      headers: {..._app, 'Authorization': 'Bearer $token'},
+    ).timeout(const Duration(seconds: 12));
+    return _safeDecode(response.body);
+  }
+
+  /// register / unregister this phone for push, or mark notifications read (see api/mobile/notifications.php).
+  static Future<Map<String, dynamic>> postNotifications(Map<String, dynamic> body) async {
+    final token = await getToken();
+    if (token.isEmpty) return {'success': false};
+    final response = await http.post(
+      Uri.parse('$baseUrl/notifications.php'),
+      headers: {..._app, 'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+      body: jsonEncode(body),
+    ).timeout(const Duration(seconds: 12));
+    return _safeDecode(response.body);
+  }
+
+  /// What the Android app needs to register with Firebase (set up on the portal); 'fcm' is null when it is not.
+  static Future<Map<String, dynamic>> getPushClient(String package) async {
+    final token = await getToken();
+    if (token.isEmpty) return {'success': false};
+    final response = await http.get(
+      Uri.parse('$baseUrl/notifications.php?client=android&package=${Uri.encodeQueryComponent(package)}'),
+      headers: {..._app, 'Authorization': 'Bearer $token'},
+    ).timeout(const Duration(seconds: 12));
+    return _safeDecode(response.body);
+  }
+
   static Future<Map<String, dynamic>> getParentStudents() async {
     final token = await getToken();
     final response = await http.get(

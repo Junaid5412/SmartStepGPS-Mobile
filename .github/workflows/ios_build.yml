@@ -109,6 +109,12 @@ jobs:
           PROFILE_UUID="$(/usr/libexec/PlistBuddy -c 'Print :UUID' profile.plist)"
           PROFILE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :Name' profile.plist)"
           cp profile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/"$PROFILE_UUID".mobileprovision
+          # Does this profile allow push notifications? Only then is the app signed with the push entitlement:
+          # asking for it with a profile that lacks it fails the whole build. (To switch push on: enable Push
+          # Notifications for the App ID at developer.apple.com, make a new App Store profile, update the secret.)
+          PROFILE_PUSH="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:aps-environment' profile.plist 2>/dev/null || true)"
+          echo "PROFILE_PUSH=$PROFILE_PUSH" >> "$GITHUB_ENV"
+          echo "Push notifications in this profile: ${PROFILE_PUSH:-NO - the iPhone app is built without push}"
           rm -f profile.mobileprovision profile.plist
 
           # The profile's name is what xcodebuild matches on, and it is not something worth making
@@ -135,6 +141,9 @@ jobs:
           PROVISIONING_PROFILE_SPECIFIER = ${PROFILE_NAME}
           CODE_SIGN_IDENTITY = Apple Distribution
           XCCONFIG
+          if [ -n "${PROFILE_PUSH:-}" ]; then
+            echo "CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements" >> ios/Flutter/Release.xcconfig
+          fi
 
           BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' ios/Runner/Info.plist 2>/dev/null || echo 'com.smartstep.gps')"
           if [ "$BUNDLE_ID" = "\$(PRODUCT_BUNDLE_IDENTIFIER)" ]; then BUNDLE_ID="com.smartstep.gps"; fi
